@@ -52,7 +52,11 @@ podman machine ssh systemctl --user enable podman-restart.service
 | Logs | `podman logs -f podman-runner-1` |
 | Stop / start | `podman stop podman-runner-1` / `deploy/ci-runner/register.sh` |
 | Remove (`config.sh remove` + delete container and volume) | `deploy/ci-runner/register.sh remove` |
-| Free disk | `podman image prune -f` (CI builds images; the workflows delete their own tags, not layers) |
+| Free disk | `podman image prune -f` (the frontend image builds leave an untagged ~0.5 GB node stage when sources change; the workflows delete only their own tags) |
+
+**Disk budget.** Expect ~6 GB for one runner: the image (~1.5 GB), its volume (`_work` + .NET SDK,
+~1 GB) and the container's own layer (~4 GB of NuGet/npm/Playwright caches and apt packages;
+`register.sh` recreating the container resets it). Check with `podman machine ssh df -h /var`.
 
 **Upgrade.** The runner updates itself in its volume when GitHub ships a new version (GitHub
 refuses runners that fall too far behind). To move to a new image (newer docker CLI, OS
