@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using Amazon.S3;
 using Amazon.S3.Model;
 using Finbuckle.MultiTenant;
@@ -122,6 +122,15 @@ public sealed class FshWebApplicationFactory : WebApplicationFactory<Program>, I
         ArgumentNullException.ThrowIfNull(builder);
 
         builder.UseEnvironment("Development");
+
+        // The host switches Billing/Catalog/Tickets/Chat off by default (Modules:{Name}:Enabled);
+        // the integration suite exercises every module, so turn them all on. AddModules reads the
+        // switches eagerly while the builder is assembled, before the ConfigureAppConfiguration
+        // overlay below applies, so they must go in as host settings (like the environment above).
+        builder.UseSetting("Modules:Billing:Enabled", "true");
+        builder.UseSetting("Modules:Catalog:Enabled", "true");
+        builder.UseSetting("Modules:Tickets:Enabled", "true");
+        builder.UseSetting("Modules:Chat:Enabled", "true");
 
         builder.ConfigureAppConfiguration((_, config) =>
         {

@@ -46,6 +46,7 @@ import { EntityDetailSection } from "@/components/list";
 import { useAuth } from "@/auth/use-auth";
 import { useSseEvents, useSseStatus, type SseEvent, type SseStatus } from "@/sse/sse-context";
 import { cn } from "@/lib/cn";
+import { useModules } from "@/hooks/use-modules";
 
 // ────────────────────────────────────────────────────────────────────────
 // Shaping helpers — pure, tested via memoization at the call sites.
@@ -975,16 +976,24 @@ export function OverviewPage() {
   const { status: sseStatus, eventCount } = useSseStatus();
   const { events } = useSseEvents();
 
+  // Billing is an optional module (Modules:Billing:Enabled). When it's switched
+  // off its endpoints are never mapped, so don't fire the queries at all — the
+  // widgets below then render their empty states instead of 404 errors.
+  const { isEnabled: isModuleEnabled } = useModules();
+  const billingOn = isModuleEnabled("Billing");
+
   const usage = useQuery({
     queryKey: ["billing", "usage"],
     queryFn: () => getUsageSnapshots(),
     staleTime: 60_000,
+    enabled: billingOn,
   });
 
   const subscription = useQuery({
     queryKey: ["billing", "subscription", "me"],
     queryFn: () => getMySubscription(),
     staleTime: 60_000,
+    enabled: billingOn,
   });
 
   // Tenant status drives the "Valid for" stat card and its tone — the same
@@ -1009,6 +1018,7 @@ export function OverviewPage() {
   }, [tenantId]);
   const showFirstRun =
     !dismissed &&
+    billingOn &&
     !subscription.isLoading &&
     !subscription.isError &&
     !subscription.data;
