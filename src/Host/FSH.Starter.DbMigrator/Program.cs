@@ -98,6 +98,8 @@ builder.Services.AddMediator(o =>
         typeof(FSH.Modules.Tickets.TicketsModule),
         typeof(FSH.Modules.Search.Contracts.SearchContractsMarker),
         typeof(FSH.Modules.Search.SearchModule),
+        typeof(FSH.Modules.AccessControl.Contracts.AccessControlContractsMarker),
+        typeof(FSH.Modules.AccessControl.AccessControlModule),
         typeof(FSH.Modules.Files.Contracts.v1.Commands.RequestUploadUrlCommand),
         typeof(FSH.Modules.Files.FilesModule),
         typeof(FSH.Modules.Chat.Contracts.v1.Commands.CreateChannelCommand),
@@ -118,6 +120,7 @@ var moduleAssemblies = new Assembly[]
     typeof(CatalogModule).Assembly,
     typeof(TicketsModule).Assembly,
     typeof(FSH.Modules.Search.SearchModule).Assembly,
+    typeof(FSH.Modules.AccessControl.AccessControlModule).Assembly,
     typeof(FSH.Modules.Chat.ChatModule).Assembly,
     typeof(FSH.Modules.Notifications.NotificationsModule).Assembly,
 };

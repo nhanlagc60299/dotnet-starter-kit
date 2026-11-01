@@ -21,4 +21,5 @@ public static class TestConstants
     public const string CatalogBasePath = "/api/v1/catalog";
     public const string TicketsBasePath = "/api/v1";
     public const string SearchBasePath = "/api/v1/search";
+    public const string AccessControlBasePath = "/api/v1/access-control";
 }
