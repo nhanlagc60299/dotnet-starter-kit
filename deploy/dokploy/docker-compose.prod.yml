@@ -37,11 +37,11 @@ services:
     # No ports: only the other services of this project reach the database.
 
   # One-shot, runs on every deploy before the migrator: creates / refreshes the three database
-  # roles, extensions, schemas and grants as the bootstrap superuser (fsh). Idempotent, so it also
+  # roles, extensions and base grants as the bootstrap superuser (fsh). Idempotent, so it also
   # covers an existing volume and password rotation, which Postgres' first-boot-only
   # /docker-entrypoint-initdb.d would not. The scripts are bind-mounted from the repo checkout,
   # which Dokploy has just cloned when `compose up` runs.
-  db-roles:
+  db-roles: &db-roles
     image: postgres:18-alpine
     restart: "no"
     depends_on:
@@ -58,6 +58,15 @@ services:
       - ./postgres-init:/work/postgres-init:ro
       - ./scripts:/work/scripts:ro
     entrypoint: ["sh", "/work/scripts/db-roles.sh"]
+
+  # Same script again, after the migrator and before the API: grants on schemas and tables that
+  # the migrator created during THIS deploy (a new module's schema), which the first pass
+  # could not see yet.
+  db-grants:
+    <<: *db-roles
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrator: { condition: service_completed_successfully }
 
   valkey:
     image: valkey/valkey:9.1.0-alpine
@@ -195,6 +204,7 @@ services:
       valkey:   { condition: service_healthy }
       migrator: { condition: service_completed_successfully }
       init:     { condition: service_completed_successfully }
+      db-grants: { condition: service_completed_successfully }
     volumes:
       # Root of the local storage provider (WebRootPath = /app/wwwroot). Without it,
       # uploads die with the container on every redeploy.

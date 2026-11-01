@@ -4,7 +4,7 @@
 
 | Service | Image | Network | What it is |
 |---|---|---|---|
-| `db-roles` | `postgres:18-alpine` | internal only | One-shot, every deploy: creates/refreshes the three DB roles, extensions, schemas and grants (see [Database roles](#database-roles)). |
+| `db-roles`, `db-grants` | `postgres:18-alpine` | internal only | One-shot, every deploy: roles, extensions and grants, before and after the migrator (see [Database roles](#database-roles)). |
 | `init` | `alpine:3.20` | internal only | One-shot: validates the storage settings and fixes ownership of the `api_files` volume. |
 | `postgres` | `postgres:18-alpine` | internal only | Database. Never reachable from outside the project. |
 | `valkey` | `valkey/valkey:9.1.0-alpine` | internal only | HybridCache L2, Data Protection keys, idempotency store (password + AOF). |
@@ -32,7 +32,7 @@
    | `app.example.com` | `dashboard` | `80` |
 
    Use *Preview Compose* to inspect the Traefik labels Dokploy adds before deploying. `api`, `admin` and `dashboard` already join the external `dokploy-network` in the compose file (the Dokploy docs require this for services other than the one a domain is added to).
-7. **Deploy.** Click Deploy. Order is enforced by `depends_on`: `postgres` + `valkey` healthy, then `db-roles` (roles/grants) and `migrator` run and must exit 0, then `api`, `admin`, `dashboard`. If `migrator` fails, nothing else starts: read its log in the Logs tab.
+7. **Deploy.** Click Deploy. Order is enforced by `depends_on`: `postgres` + `valkey` healthy, then `db-roles`, `migrator`, `db-grants` run in that order and must exit 0, then `api`, `admin`, `dashboard`. If `migrator` fails, nothing else starts: read its log in the Logs tab.
 8. **Verify.**
    ```bash
    curl -fsS https://api.example.com/health/ready        # 200
@@ -47,7 +47,7 @@ Redeploys (new image tag or `git push` with auto-deploy) re-run `migrator` first
 
 ## Database roles
 
-Ba role, tạo bởi service one-shot `db-roles` (chạy `scripts/db-roles.sh` → `postgres-init/01-roles.sql`) ở **mỗi lần deploy**, trước `migrator`:
+Ba role, tạo bởi hai service one-shot cùng chạy `scripts/db-roles.sh` → `postgres-init/01-roles.sql` ở **mỗi lần deploy**: `db-roles` (trước `migrator`: tạo role, extension, grant nền) và `db-grants` (sau `migrator`, trước `api`: cấp quyền cho schema/bảng migrator vừa tạo):
 
 | Role | Dùng bởi | Quyền |
 |---|---|---|
@@ -64,7 +64,9 @@ PGUSER=fsh PGDATABASE=fsh APP_MIGRATE_PASSWORD=... APP_RUNTIME_PASSWORD=... APP_
   sh /duong/dan/toi/scripts/db-roles.sh
 ```
 
-**Khi nào cần chạy lại.** `ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate` đã đủ cho bảng do migrator tạo sau này, nên deploy bình thường không cần bước thêm. Ngoại lệ: thêm *module mới* (schema mới). Schema được tạo sẵn theo danh sách `module_schemas` ở đầu `01-roles.sql`; thêm tên schema mới vào đó, nếu không thì `app_runtime` chưa có quyền đến khi `db-roles` chạy lại (deploy lần nữa). Script chỉ giả định DB mới: nếu từng chạy migrator bằng user `fsh`, các bảng thuộc `fsh` và `app_migrate` không ALTER được (đổi owner thủ công trước).
+**Module mới không cần sửa gì.** Schema module được phát hiện động (mọi schema do `app_migrate` sở hữu), và `db-grants` chạy lại lượt cấp quyền *sau* migrator, nên schema/bảng mà migrator tạo ngay trong lần deploy này cũng có quyền trước khi `api` khởi động. `ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate` lo các bảng tạo thêm sau đó. Script chỉ giả định DB mới: nếu từng chạy migrator bằng user `fsh`, các bảng thuộc `fsh` và `app_migrate` không ALTER được (đổi owner thủ công trước).
+
+**Bảo mật script.** `01-roles.sql` chạy bằng superuser, trong khi `app_migrate` sở hữu `public` và database, tức là có thể đặt hàm/toán tử trùng tên hoặc `ALTER DATABASE ... SET search_path`. Vì vậy file đặt `SET search_path = pg_catalog, pg_temp` ngay đầu, tạo extension `SCHEMA public`, và `db-roles.sh` bỏ `PGOPTIONS`/`PSQLRC`. Khi sửa file, đừng dùng tên không qualify ngoài `pg_catalog`.
 
 **Audit append-only (nguyên tắc 2).** `app_runtime` không có `UPDATE/DELETE/TRUNCATE` trên schema `audit`, kể cả bảng tương lai (default privileges). Lưu ý: module Auditing có `AuditRetentionJob` (Hangfire recurring job `auditing-retention`) dùng `ExecuteDeleteAsync` để xoá bản ghi cũ. Job này **tắt mặc định** (`Auditing:Retention:Enabled=false`) và ở đây vẫn tắt; nếu bật, lệnh DELETE sẽ bị Postgres từ chối (`permission denied for table AuditRecords`), nghĩa là quyền DB chặn đúng thứ nguyên tắc 2 cấm. Đừng bật `Auditing__Retention__Enabled`; nếu sau này cần lưu trữ audit cũ, làm bằng bước archive có chủ đích dưới `app_migrate`, không phải job tự động.
 
@@ -107,7 +109,7 @@ Add a notification channel (e-mail, Telegram, Slack) and attach it to all three.
 |---|---|
 | `... is required` when deploying | An empty required variable in the Environment tab; the message names it. |
 | `network dokploy-network declared as external, but could not be found` | Not running under Dokploy (it creates the network), or Dokploy's network was removed. Locally: `docker network create dokploy-network`. |
-| `api` never starts | `db-roles` or `migrator` exited non-zero. Check their logs: missing/unsafe `APP_*_PASSWORD`, wrong `POSTGRES_PASSWORD` (if the volume predates a password change), or `JWT_SIGNING_KEY` containing `replace-with`. |
+| `api` never starts | `db-roles`, `migrator` or `db-grants` exited non-zero. Check their logs: missing/unsafe `APP_*_PASSWORD`, wrong `POSTGRES_PASSWORD` (if the volume predates a password change), or `JWT_SIGNING_KEY` containing `replace-with`. |
 | `pull access denied` for `fsh-api` | The GHCR package is private and the VPS has no credential (step 2), or `GHCR_OWNER` is wrong. |
 | 404 / 502 from Traefik on a domain | Service name or port in the Domains tab doesn't match the table above, or the service isn't on `dokploy-network`. |
 | CORS error in the browser | `FSH_ADMIN_URL` / `FSH_DASHBOARD_URL` differ from the origins actually served. |
