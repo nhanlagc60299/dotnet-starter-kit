@@ -123,16 +123,19 @@ public sealed class FshWebApplicationFactory : WebApplicationFactory<Program>, I
 
         builder.UseEnvironment("Development");
 
+        // The host switches Billing/Catalog/Tickets/Chat off by default (Modules:{Name}:Enabled);
+        // the integration suite exercises every module, so turn them all on. AddModules reads the
+        // switches eagerly while the builder is assembled, before the ConfigureAppConfiguration
+        // overlay below applies, so they must go in as host settings (like the environment above).
+        builder.UseSetting("Modules:Billing:Enabled", "true");
+        builder.UseSetting("Modules:Catalog:Enabled", "true");
+        builder.UseSetting("Modules:Tickets:Enabled", "true");
+        builder.UseSetting("Modules:Chat:Enabled", "true");
+
         builder.ConfigureAppConfiguration((_, config) =>
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                // The host switches Billing/Catalog/Tickets/Chat off by default (Modules:{Name}:Enabled);
-                // the integration suite exercises every module, so turn them all on here.
-                ["Modules:Billing:Enabled"] = "true",
-                ["Modules:Catalog:Enabled"] = "true",
-                ["Modules:Tickets:Enabled"] = "true",
-                ["Modules:Chat:Enabled"] = "true",
                 ["DatabaseOptions:Provider"] = "POSTGRESQL",
                 ["DatabaseOptions:ConnectionString"] = _postgres.GetConnectionString(),
                 ["DatabaseOptions:MigrationsAssembly"] = "FSH.Starter.Migrations.PostgreSQL",
