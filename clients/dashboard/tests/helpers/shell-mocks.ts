@@ -18,6 +18,19 @@ export const DEFAULT_PROFILE = {
   imageUrl: null,
 } as const;
 
+const ALL_MODULES_ON = [
+  "Identity",
+  "Multitenancy",
+  "Auditing",
+  "Files",
+  "Webhooks",
+  "Notifications",
+  "Billing",
+  "Catalog",
+  "Tickets",
+  "Chat",
+].map((name) => ({ name, enabled: true, required: name === "Identity" || name === "Multitenancy" }));
+
 /**
  * Mock every API call the authenticated AppShell fires on load so any
  * protected page can be visited in isolation without hanging on the
@@ -42,6 +55,11 @@ export async function installShellMocks(page: Page): Promise<void> {
 
   // Topbar chat unread badge.
   await mockJsonResponse(page, "**/api/v1/chat/channels**", []);
+
+  // Module switches (Modules:{Name}:Enabled). Default to everything on so
+  // page specs exercise the full UI; a spec that tests a switched-off module
+  // overrides this after the call.
+  await mockJsonResponse(page, "**/api/v1/modules", ALL_MODULES_ON);
 
   // Defensive: profile + permissions (harmless if a page re-reads them).
   await mockJsonResponse(page, "**/api/v1/identity/profile", DEFAULT_PROFILE);

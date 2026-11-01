@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using Amazon.S3;
 using Amazon.S3.Model;
 using Finbuckle.MultiTenant;
@@ -127,6 +127,12 @@ public sealed class FshWebApplicationFactory : WebApplicationFactory<Program>, I
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
+                // The host switches Billing/Catalog/Tickets/Chat off by default (Modules:{Name}:Enabled);
+                // the integration suite exercises every module, so turn them all on here.
+                ["Modules:Billing:Enabled"] = "true",
+                ["Modules:Catalog:Enabled"] = "true",
+                ["Modules:Tickets:Enabled"] = "true",
+                ["Modules:Chat:Enabled"] = "true",
                 ["DatabaseOptions:Provider"] = "POSTGRESQL",
                 ["DatabaseOptions:ConnectionString"] = _postgres.GetConnectionString(),
                 ["DatabaseOptions:MigrationsAssembly"] = "FSH.Starter.Migrations.PostgreSQL",

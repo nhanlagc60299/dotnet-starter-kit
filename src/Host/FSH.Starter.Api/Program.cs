@@ -127,4 +127,11 @@ app.UseHeroPlatform(p =>
 app.MapGet("/", () => Results.Ok(new { message = "hello world!" }))
    .WithTags("PlayGround")
    .AllowAnonymous();
+
+// Which modules this deployment runs. Clients use it to hide features that are switched off via
+// Modules:{Name}:Enabled (see appsettings.json) instead of calling endpoints that were never mapped.
+app.MapGet("/api/v1/modules", (IModuleRegistry registry) => Results.Ok(registry.Modules))
+   .WithTags("System")
+   .WithName("GetModules")
+   .RequireAuthorization();
 await app.RunAsync();

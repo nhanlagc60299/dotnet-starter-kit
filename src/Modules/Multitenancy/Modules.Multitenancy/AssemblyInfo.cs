@@ -1,3 +1,3 @@
 using FSH.Framework.Web.Modules;
 
-[assembly: FshModule(typeof(FSH.Modules.Multitenancy.MultitenancyModule), 200)]
+[assembly: FshModule(typeof(FSH.Modules.Multitenancy.MultitenancyModule), 200, Required = true)]
