@@ -33,6 +33,35 @@ public sealed class ValidatorTests
         v.Validate(new IndexSearchDocumentCommand("t", "1", "x", Body: new string('b', IndexSearchDocumentCommandValidator.MaxBodyLength + 1))).IsValid.ShouldBeFalse();
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("/products/42")]
+    [InlineData("/")]
+    [InlineData("http://example.com/a")]
+    [InlineData("https://example.com/a?b=c#d")]
+    [InlineData("HTTPS://EXAMPLE.COM")]
+    public void IndexValidator_Should_Accept_RelativeOrHttpUrl(string? url) =>
+        new IndexSearchDocumentCommandValidator()
+            .Validate(new IndexSearchDocumentCommand("t", "1", "x", Url: url))
+            .IsValid.ShouldBeTrue();
+
+    [Theory]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("JavaScript:alert(1)")]
+    [InlineData(" javascript:alert(1)")]
+    [InlineData("data:text/html,<script>alert(1)</script>")]
+    [InlineData("vbscript:msgbox(1)")]
+    [InlineData("//evil.example.com/x")]
+    [InlineData("/\\evil.example.com/x")]
+    [InlineData("ftp://example.com/file")]
+    [InlineData("file:///etc/passwd")]
+    [InlineData("products/42")]
+    [InlineData("")]
+    public void IndexValidator_Should_Reject_UnsafeOrNonHttpUrl(string url) =>
+        new IndexSearchDocumentCommandValidator()
+            .Validate(new IndexSearchDocumentCommand("t", "1", "x", Url: url))
+            .IsValid.ShouldBeFalse();
+
     [Fact]
     public void RemoveValidator_Should_Fail_When_KeyMissing()
     {

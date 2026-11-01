@@ -52,6 +52,9 @@ public sealed class SearchEndpointTests
     [Theory]
     [InlineData("Du lịch Đà Nẵng", "da nang")]
     [InlineData("Ve may bay da nang", "Đà Nẵng")]
+    [InlineData("Lớp12A chuyên toán", "lop12a")]
+    [InlineData("Phòng301 tầng hai", "phong301")]
+    [InlineData("Lớp-chuyên2 toán", "lop chuyen2")]
     public async Task Search_Should_MatchAcrossAccents_InBothDirections(string title, string query)
     {
         using var client = await _auth.CreateRootAdminClientAsync();

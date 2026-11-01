@@ -17,7 +17,8 @@ namespace FSH.Starter.Migrations.PostgreSQL.Search
 
             // Hand-written: the generated Tsv column below needs the search.vi configuration to exist first.
             // unaccent is a trusted extension, so a database owner can create it without superuser. search.vi
-            // is `simple` with unaccent in front, so "Đà Nẵng" and "da nang" index to the same lexemes. The
+            // is `simple` with unaccent in front, so "Đà Nẵng" and "da nang" index to the same lexemes. numword/numhword/
+            // hword_numpart (e.g. "Lớp12A", "Học-sinh2") must be mapped too, or they keep their accents. The
             // dictionary is qualified with the schema unaccent actually lives in (it may predate this migration).
             migrationBuilder.Sql("""
                 CREATE EXTENSION IF NOT EXISTS unaccent;
@@ -29,7 +30,7 @@ namespace FSH.Starter.Migrations.PostgreSQL.Search
                     FROM pg_extension x JOIN pg_namespace n ON n.oid = x.extnamespace
                     WHERE x.extname = 'unaccent';
                     EXECUTE format(
-                        'ALTER TEXT SEARCH CONFIGURATION search.vi ALTER MAPPING FOR hword, hword_part, word WITH %I.unaccent, simple',
+                        'ALTER TEXT SEARCH CONFIGURATION search.vi ALTER MAPPING FOR word, hword, hword_part, numword, numhword, hword_numpart WITH %I.unaccent, simple',
                         ext_schema);
                 END
                 $$;
