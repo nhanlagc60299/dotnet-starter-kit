@@ -36,6 +36,29 @@ services:
       retries: 12
     # No ports: only the other services of this project reach the database.
 
+  # One-shot, runs on every deploy before the migrator: creates / refreshes the three database
+  # roles, extensions, schemas and grants as the bootstrap superuser (fsh). Idempotent, so it also
+  # covers an existing volume and password rotation, which Postgres' first-boot-only
+  # /docker-entrypoint-initdb.d would not. The scripts are bind-mounted from the repo checkout,
+  # which Dokploy has just cloned when `compose up` runs.
+  db-roles:
+    image: postgres:18-alpine
+    restart: "no"
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PGHOST: postgres
+      PGDATABASE: fsh
+      PGUSER: fsh
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      APP_MIGRATE_PASSWORD: ${APP_MIGRATE_PASSWORD:?APP_MIGRATE_PASSWORD is required}
+      APP_RUNTIME_PASSWORD: ${APP_RUNTIME_PASSWORD:?APP_RUNTIME_PASSWORD is required}
+      APP_READONLY_PASSWORD: ${APP_READONLY_PASSWORD:?APP_READONLY_PASSWORD is required}
+    volumes:
+      - ./postgres-init:/work/postgres-init:ro
+      - ./scripts:/work/scripts:ro
+    entrypoint: ["sh", "/work/scripts/db-roles.sh"]
+
   valkey:
     image: valkey/valkey:9.1.0-alpine
     restart: unless-stopped
@@ -151,14 +174,14 @@ services:
     image: ghcr.io/${GHCR_OWNER:?GHCR_OWNER is required}/fsh-db-migrator:${FSH_IMAGE_TAG:-latest}
     restart: "no"
     depends_on:
-      postgres: { condition: service_healthy }
+      db-roles: { condition: service_completed_successfully }
       valkey:   { condition: service_healthy }
     environment:
       <<: *modules
       DOTNET_ENVIRONMENT: Production
       # Connection as the DDL role (app_migrate). The chiseled image has no libgssapi_krb5,
       # so keep `GSS Encryption Mode=Disable` in the string.
-      DatabaseOptions__ConnectionString: ${DB_MIGRATE_CONNECTION:?DB_MIGRATE_CONNECTION is required}
+      DatabaseOptions__ConnectionString: Host=postgres;Database=fsh;Username=app_migrate;Password=${APP_MIGRATE_PASSWORD};GSS Encryption Mode=Disable
       CachingOptions__Redis: valkey,password=${REDIS_PASSWORD}
       JwtOptions__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required}
       Seed__DefaultAdminPassword: ${SEED_ADMIN_PASSWORD:?SEED_ADMIN_PASSWORD is required}
@@ -181,7 +204,7 @@ services:
       DOTNET_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
       # Connection as the runtime role (app_runtime): DML only, no DDL.
-      DatabaseOptions__ConnectionString: ${DB_RUNTIME_CONNECTION:?DB_RUNTIME_CONNECTION is required}
+      DatabaseOptions__ConnectionString: Host=postgres;Database=fsh;Username=app_runtime;Password=${APP_RUNTIME_PASSWORD};GSS Encryption Mode=Disable
       CachingOptions__Redis: valkey,password=${REDIS_PASSWORD}
       JwtOptions__SigningKey: ${JWT_SIGNING_KEY}
       Seed__DefaultAdminPassword: ${SEED_ADMIN_PASSWORD}
