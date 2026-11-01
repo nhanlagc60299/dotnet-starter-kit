@@ -68,6 +68,41 @@ services:
       postgres: { condition: service_healthy }
       migrator: { condition: service_completed_successfully }
 
+  # Daily pg_dump (as app_readonly) to an S3-compatible bucket (Cloudflare R2) and a monthly proof
+  # that the newest dump restores, both from busybox crond. Always on: backups are not optional,
+  # so a missing BACKUP_S3_* variable fails the deploy instead of silently skipping them.
+  # Never deletes remote objects; retention is the bucket's lifecycle rule (README, "Backup").
+  backup:
+    build:
+      context: ./db-backup
+    image: fsh/backup:local
+    restart: unless-stopped
+    # crond is PID 1 and does not reap children: without an init the throwaway postgres of
+    # restore-verify would stay behind as a zombie after every run.
+    init: true
+    depends_on:
+      postgres: { condition: service_healthy }
+      db-roles: { condition: service_completed_successfully }
+    environment:
+      PGHOST: postgres
+      PGDATABASE: fsh
+      PGUSER: app_readonly
+      PGPASSWORD: ${APP_READONLY_PASSWORD}
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:?BACKUP_S3_ENDPOINT is required (backups are mandatory)}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:?BACKUP_S3_BUCKET is required (backups are mandatory)}
+      BACKUP_S3_ACCESS_KEY: ${BACKUP_S3_ACCESS_KEY:?BACKUP_S3_ACCESS_KEY is required (backups are mandatory)}
+      BACKUP_S3_SECRET_KEY: ${BACKUP_S3_SECRET_KEY:?BACKUP_S3_SECRET_KEY is required (backups are mandatory)}
+      BACKUP_S3_PREFIX: ${BACKUP_S3_PREFIX:-fsh}
+      BACKUP_S3_PROVIDER: ${BACKUP_S3_PROVIDER:-Cloudflare}
+      BACKUP_CRON: ${BACKUP_CRON:-0 2 * * *}
+      RESTORE_VERIFY_CRON: ${RESTORE_VERIFY_CRON:-0 4 1 * *}
+      BACKUP_PING_URL: ${BACKUP_PING_URL:-}
+      RESTORE_VERIFY_PING_URL: ${RESTORE_VERIFY_PING_URL:-}
+    volumes:
+      # Scratch space for dumps and the throwaway restore cluster. Declared so the base image's
+      # anonymous VOLUME does not leak a new volume on every redeploy.
+      - backup_work:/var/lib/postgresql
+
   valkey:
     image: valkey/valkey:9.1.0-alpine
     restart: unless-stopped
@@ -285,3 +320,4 @@ volumes:
   valkey_data:
   api_files:
   rustfs_data:
+  backup_work:

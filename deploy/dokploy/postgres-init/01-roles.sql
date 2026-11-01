@@ -9,7 +9,7 @@
 --   app_migrate   owns the database and every module schema, runs the EF migrations. DDL.
 --   app_runtime   used by the API: DML only. Owns schema `hangfire` (Hangfire.PostgreSql migrates
 --                 its own schema at startup). Append-only on schema `audit`.
---   app_readonly  SELECT everywhere, for reporting / support.
+--   app_readonly  SELECT everywhere (tables and sequences), for reporting / support and pg_dump.
 --
 -- Module schemas are discovered, not listed: every schema owned by app_migrate. A new module needs
 -- no change here.
@@ -76,7 +76,10 @@ FROM pg_temp._module_schemas WHERE name <> 'audit' \gexec
 SELECT format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %I TO app_runtime', name)
 FROM pg_temp._module_schemas \gexec
 SELECT format('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO app_readonly', name) FROM pg_temp._module_schemas \gexec
+-- SELECT on sequences too: pg_dump reads every sequence's value, and the backup runs as app_readonly.
+SELECT format('GRANT SELECT ON ALL SEQUENCES IN SCHEMA %I TO app_readonly', name) FROM pg_temp._module_schemas \gexec
 GRANT SELECT ON ALL TABLES IN SCHEMA hangfire TO app_readonly;
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA hangfire TO app_readonly;
 
 -- EF keeps one shared __EFMigrationsHistory in `public`; the API's readiness check reads it.
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO app_runtime, app_readonly;
@@ -98,6 +101,10 @@ SELECT format(
     'ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA %I GRANT SELECT ON TABLES TO app_readonly',
     name)
 FROM pg_temp._module_schemas \gexec
+SELECT format(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA %I GRANT SELECT ON SEQUENCES TO app_readonly',
+    name)
+FROM pg_temp._module_schemas \gexec
 
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA audit GRANT SELECT, INSERT ON TABLES TO app_runtime;
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA audit REVOKE UPDATE, DELETE, TRUNCATE ON TABLES FROM app_runtime;
@@ -105,3 +112,4 @@ ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA public GRANT SELECT ON T
 
 -- Hangfire tables are created by app_runtime.
 ALTER DEFAULT PRIVILEGES FOR ROLE app_runtime IN SCHEMA hangfire GRANT SELECT ON TABLES TO app_readonly;
+ALTER DEFAULT PRIVILEGES FOR ROLE app_runtime IN SCHEMA hangfire GRANT SELECT ON SEQUENCES TO app_readonly;

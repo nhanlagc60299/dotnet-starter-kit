@@ -12,6 +12,7 @@
 | `api` | `ghcr.io/<GHCR_OWNER>/fsh-api` | internal + `dokploy-network` | ASP.NET Core API, port **8080**. |
 | `admin` | built from `clients/admin` | internal + `dokploy-network` | Operator console (nginx), port **80**. |
 | `dashboard` | built from `clients/dashboard` | internal + `dokploy-network` | Tenant dashboard (nginx), port **80**. |
+| `backup` | built from `deploy/dokploy/db-backup` | internal only | Always on: daily `pg_dump` to an S3-compatible bucket (R2) and a monthly restore check; see [Backup và restore](#backup-và-restore). |
 | `rustfs`, `rustfs-init` | `rustfs/rustfs`, `amazon/aws-cli` | profile `storage` | Optional S3-compatible object store; see [Profiles](#profiles). |
 
 `admin` and `dashboard` have no registry image yet, so Dokploy builds them on the VPS from the repository (first deploy: several minutes).
@@ -70,6 +71,73 @@ PGUSER=fsh PGDATABASE=fsh APP_MIGRATE_PASSWORD=... APP_RUNTIME_PASSWORD=... APP_
 
 **Audit append-only (nguyên tắc 2).** `app_runtime` không có `UPDATE/DELETE/TRUNCATE` trên schema `audit`, kể cả bảng tương lai (default privileges). Lưu ý: module Auditing có `AuditRetentionJob` (Hangfire recurring job `auditing-retention`) dùng `ExecuteDeleteAsync` để xoá bản ghi cũ. Job này **tắt mặc định** (`Auditing:Retention:Enabled=false`) và ở đây vẫn tắt; nếu bật, lệnh DELETE sẽ bị Postgres từ chối (`permission denied for table AuditRecords`), nghĩa là quyền DB chặn đúng thứ nguyên tắc 2 cấm. Đừng bật `Auditing__Retention__Enabled`; nếu sau này cần lưu trữ audit cũ, làm bằng bước archive có chủ đích dưới `app_migrate`, không phải job tự động.
 
+## Backup và restore
+
+Service `backup` luôn bật (backup là bắt buộc) và **fail closed**: thiếu một trong `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, `BACKUP_S3_ACCESS_KEY`, `BACKUP_S3_SECRET_KEY` thì compose từ chối deploy (`required variable ... is missing`), và container tự thoát với thông báo rõ nếu chạy mà thiếu. Nó chạy `busybox crond` (giờ UTC), log ra stdout (tab *Logs* của Dokploy):
+
+| Việc | Lịch mặc định | Biến | Làm gì |
+|---|---|---|---|
+| `backup.sh` | `0 2 * * *` (02:00 hằng ngày) | `BACKUP_CRON` | `pg_dump -Fc` bằng `app_readonly` → `fsh-<UTC>.dump` → `rclone copyto` lên `<bucket>/<BACKUP_S3_PREFIX>/`, rồi file `.sha256`. File `.sha256` được tải lên **sau cùng**: có nó nghĩa là bản backup đầy đủ. Xoá file tạm local khi xong. |
+| `restore-verify.sh` | `0 4 1 * *` (04:00 ngày 1 hằng tháng) | `RESTORE_VERIFY_CRON` | Tải bản mới nhất, kiểm sha256, `initdb` một cluster tạm *trong container* (chỉ unix socket, không đụng DB prod), `pg_restore`, in số bảng theo schema, số dòng `identity."Users"`, kiểm có tenant `root`. Thoát ≠ 0 nếu bất kỳ bước nào hỏng. Dọn cluster tạm. |
+
+Script **không bao giờ xoá** gì trên remote (chỉ `rclone copyto`). Thời hạn lưu giữ là việc của bucket (xem dưới), cũng là cách để nguyên tắc "không xoá cứng tự động" không bị phá bởi chính backup.
+
+### Cấu hình Cloudflare R2
+
+1. R2 → *Create bucket* (ví dụ `fsh-backups`). Bucket phải tạo sẵn: token chỉ cần quyền object nên service không tạo bucket.
+2. R2 → *Manage API tokens* → tạo token **Object Read & Write**, giới hạn đúng bucket đó. Lấy *Access Key ID*, *Secret Access Key* và endpoint `https://<account-id>.r2.cloudflarestorage.com`.
+3. Environment tab: `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, `BACKUP_S3_ACCESS_KEY`, `BACKUP_S3_SECRET_KEY` (xem `.env.example`). `BACKUP_S3_PROVIDER` mặc định `Cloudflare`; dùng `Other` cho S3-compatible khác (RustFS, MinIO).
+4. **Retention bằng lifecycle rule**: bucket → *Settings* → *Object lifecycle rules* → *Add rule*: prefix `fsh/` (đúng `BACKUP_S3_PREFIX`), *Delete uploaded objects after* **30 days** (chỉnh theo nhu cầu; dump hằng ngày × 30 ngày là đủ cho đa số). Không tạo rule thì backup tích luỹ mãi.
+
+Lưu ý: backup chỉ gồm **database**. Volume `api_files` (hoặc bucket `fsh` của profile `storage`) cần sao lưu riêng. Dump chưa mã hoá phía client và chứa dữ liệu người dùng: giữ bucket ở chế độ private, token chỉ cấp cho bucket này. Thư mục làm việc là volume `backup_work`; cần trống khoảng 3 lần kích thước dump (dump + cluster tạm).
+
+### Chạy tay
+
+Trong tab *Terminal* của container `backup` (hoặc `docker compose exec backup ...`):
+
+```bash
+backup.sh           # backup ngay, in ra tên file đã tải lên
+restore-verify.sh   # kiểm bản mới nhất, exit 0 = restore được
+```
+
+Chạy `restore-verify.sh` sau lần deploy đầu tiên, đừng đợi ngày 1 hằng tháng: lúc đó mới biết cấu hình R2 sai thì đã mất một tháng backup.
+
+### Restore thật vào prod khi có sự cố
+
+Dựa vào việc dump giữ nguyên owner và quyền của `app_migrate` / `app_runtime`, nên các role phải tồn tại trong cluster trước. Nếu mất cả volume `pg_data`, **deploy lại như bình thường trước** (tạo role, schema rỗng, seed), rồi:
+
+1. Dừng ghi: Dokploy → dừng service `api` (và `admin`, `dashboard` nếu muốn trang bảo trì).
+2. Trong Terminal của container `backup`, tải và kiểm bản cần khôi phục:
+   ```bash
+   . /usr/local/lib/backup-common.sh
+   cd /var/lib/postgresql/work
+   rclone lsf "$REMOTE" | sort | tail                     # chọn bản: fsh-<UTC>.dump
+   rclone copyto "$REMOTE/fsh-20261101T020000Z.dump" dump
+   rclone copyto "$REMOTE/fsh-20261101T020000Z.dump.sha256" dump.sha256
+   sed -i 's/ .*/  dump/' dump.sha256 && sha256sum -c dump.sha256   # phải in "dump: OK"
+   ```
+3. Tạo lại database và nạp dump bằng superuser `fsh` (dán `POSTGRES_PASSWORD` tại chỗ, đừng lưu vào đâu):
+   ```bash
+   export PGHOST=postgres PGUSER=fsh PGPASSWORD='<POSTGRES_PASSWORD>'
+   psql -d postgres -c 'DROP DATABASE fsh WITH (FORCE)' -c 'CREATE DATABASE fsh OWNER app_migrate'
+   pg_restore --exit-on-error -d fsh dump
+   rm dump dump.sha256
+   ```
+4. **Redeploy**: `db-roles` → `migrator` (no-op, lịch sử migration đã nằm trong dump) → `db-grants` đặt lại quyền cấp database và mật khẩu role, rồi `api` lên. Kiểm `https://api.example.com/health/ready` và đăng nhập.
+
+Muốn thử mà không đụng prod: `restore-verify.sh` làm đúng việc này trong cluster tạm. Bản dump cũ hơn schema hiện tại vẫn restore được; `migrator` sẽ áp các migration còn thiếu ở bước 4.
+
+### Giám sát bằng Uptime Kuma (tuỳ chọn)
+
+Cron im lặng khi hỏng nên nên có tín hiệu "còn sống". Trong Uptime Kuma tạo hai monitor loại **Push** và dán URL của chúng vào Environment tab:
+
+| Biến | Monitor | Heartbeat interval gợi ý |
+|---|---|---|
+| `BACKUP_PING_URL` | Push, ping sau mỗi backup thành công | 26 giờ |
+| `RESTORE_VERIFY_PING_URL` | Push, ping sau mỗi lần verify thành công | khoảng 32 ngày (hoặc mức tối đa Kuma cho phép) |
+
+Script chỉ ping khi **thành công**, nên thiếu heartbeat = backup/verify hỏng hoặc không chạy. Để trống thì không ping.
+
 ## Profiles
 
 | Profile | Services | Default |
@@ -113,6 +181,7 @@ Add a notification channel (e-mail, Telegram, Slack) and attach it to all three.
 | `pull access denied` for `fsh-api` | The GHCR package is private and the VPS has no credential (step 2), or `GHCR_OWNER` is wrong. |
 | 404 / 502 from Traefik on a domain | Service name or port in the Domains tab doesn't match the table above, or the service isn't on `dokploy-network`. |
 | CORS error in the browser | `FSH_ADMIN_URL` / `FSH_DASHBOARD_URL` differ from the origins actually served. |
+| `backup` log: `BACKUP_S3_... is not set`, `NoSuchBucket`, `AccessDenied` | Biến thiếu, bucket chưa tạo, hoặc token R2 không có quyền object read/write trên bucket đó. Chạy lại `backup.sh` trong Terminal để thấy lỗi đầy đủ. |
 | Cannot load `libgssapi_krb5` in the log | Connection string lacks `GSS Encryption Mode=Disable` (harmless). |
 
 ## Sources
