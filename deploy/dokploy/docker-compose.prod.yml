@@ -1,0 +1,200 @@
+# fullstackhero — production compose for Dokploy.
+#
+# Nothing here publishes a host port. Dokploy's Traefik routes each domain to a
+# container over the external `dokploy-network`; postgres/valkey/migrator live
+# only on the project's private default network.
+#
+# Deploy: see README.md in this directory. Variables come from the Dokploy
+# Environment tab (see .env.example); there is no container_name and no
+# top-level `name:` because Dokploy sets the compose project name itself.
+
+# Same module switches for the migrator and the API: a module that is on for one
+# and off for the other would migrate a schema nobody serves, or the reverse.
+# Identity and Multitenancy are required and ignore the switch.
+x-modules: &modules
+  Modules__Billing__Enabled: ${FSH_MODULE_BILLING:-false}
+  Modules__Catalog__Enabled: ${FSH_MODULE_CATALOG:-false}
+  Modules__Tickets__Enabled: ${FSH_MODULE_TICKETS:-false}
+  Modules__Chat__Enabled: ${FSH_MODULE_CHAT:-false}
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: fsh
+      POSTGRES_USER: fsh
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      # The 18+ images keep PGDATA in a versioned subdirectory and refuse to start
+      # with a mount at the old /var/lib/postgresql/data, even on an empty volume.
+      - pg_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fsh -d fsh"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    # No ports: only the other services of this project reach the database.
+
+  valkey:
+    image: valkey/valkey:9.1.0-alpine
+    restart: unless-stopped
+    command:
+      - valkey-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      - --appendonly
+      - "yes"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a $$REDIS_PASSWORD PING | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  # Profile `storage`: S3-compatible object store (RustFS). Off by default; the API
+  # then uses the local provider (see README, "Profiles"). It joins dokploy-network
+  # because browsers upload to it directly through presigned URLs.
+  rustfs:
+    image: rustfs/rustfs:1.0.0
+    restart: unless-stopped
+    profiles: [storage]
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-}
+      RUSTFS_CONSOLE_ENABLE: "false"
+      # The admin and dashboard PUT uploads cross-origin to presigned URLs on this store.
+      RUSTFS_CORS_ALLOWED_ORIGINS: ${FSH_ADMIN_URL},${FSH_DASHBOARD_URL}
+    volumes:
+      - rustfs_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    networks: [default, dokploy-network]
+
+  # One-shot: create the bucket and open public/* to anonymous reads (same policy
+  # as deploy/docker). Re-applied on every deploy.
+  rustfs-init:
+    image: amazon/aws-cli:2.37.3
+    restart: "no"
+    profiles: [storage]
+    depends_on:
+      rustfs: { condition: service_healthy }
+    environment:
+      AWS_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY:-}
+      AWS_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:-}
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket fsh 2>/dev/null ||
+          aws --endpoint-url http://rustfs:9000 s3api create-bucket --bucket fsh
+        aws --endpoint-url http://rustfs:9000 s3api put-bucket-policy --bucket fsh --policy '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::fsh/public/*"]}]}'
+
+  # One-shot: applies EF migrations and seeds on every deploy, before the API starts.
+  migrator:
+    image: ghcr.io/${GHCR_OWNER:?GHCR_OWNER is required}/fsh-db-migrator:${FSH_IMAGE_TAG:-latest}
+    restart: "no"
+    depends_on:
+      postgres: { condition: service_healthy }
+      valkey:   { condition: service_healthy }
+    environment:
+      <<: *modules
+      DOTNET_ENVIRONMENT: Production
+      # Connection as the DDL role (app_migrate). The chiseled image has no libgssapi_krb5,
+      # so keep `GSS Encryption Mode=Disable` in the string.
+      DatabaseOptions__ConnectionString: ${DB_MIGRATE_CONNECTION:?DB_MIGRATE_CONNECTION is required}
+      CachingOptions__Redis: valkey,password=${REDIS_PASSWORD}
+      JwtOptions__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required}
+      Seed__DefaultAdminPassword: ${SEED_ADMIN_PASSWORD:?SEED_ADMIN_PASSWORD is required}
+    command: ["apply", "--seed"]
+
+  api:
+    image: ghcr.io/${GHCR_OWNER:?GHCR_OWNER is required}/fsh-api:${FSH_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      valkey:   { condition: service_healthy }
+      migrator: { condition: service_completed_successfully }
+    environment:
+      <<: *modules
+      DOTNET_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      # Connection as the runtime role (app_runtime): DML only, no DDL.
+      DatabaseOptions__ConnectionString: ${DB_RUNTIME_CONNECTION:?DB_RUNTIME_CONNECTION is required}
+      CachingOptions__Redis: valkey,password=${REDIS_PASSWORD}
+      JwtOptions__SigningKey: ${JWT_SIGNING_KEY}
+      Seed__DefaultAdminPassword: ${SEED_ADMIN_PASSWORD}
+      # `local` unless the storage profile is on; the S3 keys below are ignored by the local provider.
+      Storage__Provider: ${FSH_STORAGE_PROVIDER:-local}
+      Storage__S3__ServiceUrl: http://rustfs:9000
+      # Presigned URLs go to browsers, which cannot resolve rustfs:9000.
+      Storage__S3__PresignServiceUrl: ${FSH_S3_PUBLIC_URL:-}
+      Storage__S3__PublicBaseUrl: ${FSH_S3_PUBLIC_URL:-}/fsh
+      Storage__S3__AccessKey: ${RUSTFS_ACCESS_KEY:-}
+      Storage__S3__SecretKey: ${RUSTFS_SECRET_KEY:-}
+      Storage__S3__Bucket: fsh
+      Storage__S3__ForcePathStyle: "true"
+      # No bundled mail catcher in production: point these at a real SMTP provider.
+      MailOptions__Smtp__Host: ${FSH_SMTP_HOST:-}
+      MailOptions__Smtp__Port: ${FSH_SMTP_PORT:-587}
+      MailOptions__Smtp__Security: ${FSH_SMTP_SECURITY:-StartTls}
+      MailOptions__Smtp__UserName: ${FSH_SMTP_USERNAME:-}
+      MailOptions__Smtp__Password: ${FSH_SMTP_PASSWORD:-}
+      MailOptions__From: ${FSH_MAIL_FROM:-}
+      AllowedHosts: "*"
+      HangfireOptions__UserName: ${HANGFIRE_USERNAME:?HANGFIRE_USERNAME is required}
+      HangfireOptions__Password: ${HANGFIRE_PASSWORD:?HANGFIRE_PASSWORD is required}
+      CorsOptions__AllowedOrigins__0: ${FSH_ADMIN_URL:?FSH_ADMIN_URL is required}
+      CorsOptions__AllowedOrigins__1: ${FSH_DASHBOARD_URL:?FSH_DASHBOARD_URL is required}
+      # E-mail-link origins. Separate list from CORS: the API origin must stay off it.
+      FrontendOptions__AllowedOrigins__0: ${FSH_ADMIN_URL}
+      FrontendOptions__AllowedOrigins__1: ${FSH_DASHBOARD_URL}
+      FrontendOptions__DefaultOrigin: ${FSH_DASHBOARD_URL}
+      OpenTelemetryOptions__Exporter__Otlp__Endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    # Dokploy domain -> service `api`, port 8080.
+    networks: [default, dokploy-network]
+
+  # admin/dashboard have no registry image yet, so Dokploy builds them from the repo.
+  admin:
+    build:
+      context: ../../clients/admin
+    image: fsh/admin:local
+    restart: unless-stopped
+    depends_on:
+      migrator: { condition: service_completed_successfully }
+    environment:
+      FSH_API_URL: ${FSH_API_URL:?FSH_API_URL is required}
+      FSH_DASHBOARD_URL: ${FSH_DASHBOARD_URL:?FSH_DASHBOARD_URL is required}
+      FSH_DEFAULT_TENANT: ${FSH_DEFAULT_TENANT:-root}
+    # Dokploy domain -> service `admin`, port 80.
+    networks: [default, dokploy-network]
+
+  dashboard:
+    build:
+      context: ../../clients/dashboard
+    image: fsh/dashboard:local
+    restart: unless-stopped
+    depends_on:
+      migrator: { condition: service_completed_successfully }
+    environment:
+      FSH_API_URL: ${FSH_API_URL}
+      FSH_DEFAULT_TENANT: ${FSH_DEFAULT_TENANT:-root}
+    # Dokploy domain -> service `dashboard`, port 80.
+    networks: [default, dokploy-network]
+
+networks:
+  dokploy-network:
+    external: true
+
+volumes:
+  pg_data:
+  valkey_data:
+  rustfs_data:

@@ -1,0 +1,18 @@
+# Local smoke test ONLY (never deployed): builds the api and migrator images from
+# the repo instead of pulling them from GHCR. Used with docker-compose.prod.yml:
+#   docker compose -p fsh-t1test -f docker-compose.prod.yml -f docker-compose.local.yml --env-file <file> up -d
+# The external network must exist first: docker network create dokploy-network
+services:
+  migrator:
+    build:
+      context: ../..
+      dockerfile: src/Host/FSH.Starter.DbMigrator/Dockerfile
+    image: fsh/dbmigrator:local
+    pull_policy: never
+
+  api:
+    build:
+      context: ../..
+      dockerfile: src/Host/FSH.Starter.Api/Dockerfile
+    image: fsh/api:local
+    pull_policy: never
