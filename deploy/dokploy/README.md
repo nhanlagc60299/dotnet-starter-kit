@@ -4,6 +4,7 @@
 
 | Service | Image | Network | What it is |
 |---|---|---|---|
+| `init` | `alpine:3.20` | internal only | One-shot: validates the storage settings and fixes ownership of the `api_files` volume. |
 | `postgres` | `postgres:18-alpine` | internal only | Database. Never reachable from outside the project. |
 | `valkey` | `valkey/valkey:9.1.0-alpine` | internal only | HybridCache L2, Data Protection keys, idempotency store (password + AOF). |
 | `migrator` | `ghcr.io/<GHCR_OWNER>/fsh-db-migrator` | internal only | One-shot `apply --seed` on every deploy; exits 0 before `api` starts. |
@@ -39,7 +40,7 @@
    ```
 9. **Sign in.** `https://admin.example.com`, tenant `root`, `admin@root.com` with `SEED_ADMIN_PASSWORD`; rotate it from Settings → Security.
 
-Redeploys (new image tag or `git push` with auto-deploy) re-run `migrator` first, so migrations are applied before the new API starts. Pin `FSH_IMAGE_TAG` to a release version instead of `latest` for repeatable rollbacks.
+Redeploys (new image tag or `git push` with auto-deploy) re-run `migrator` first, so migrations are applied before the new API starts. Pin `FSH_IMAGE_TAG` to a release version instead of `latest` for repeatable rollbacks. Until the first `v*` tag is published CI pushes only `dev-latest`, so set `FSH_IMAGE_TAG=dev-latest` for the first deploy.
 
 > Pitfall: Dokploy keeps bind mounts of repository files only under `../files`; relative paths into the repo can be lost between deploys. Use named volumes for data (this file does) and Dokploy *File Mounts* for config files.
 
@@ -54,11 +55,13 @@ Redeploys (new image tag or `git push` with auto-deploy) re-run `migrator` first
 | `storage` | `rustfs`, `rustfs-init` | off |
 | `ai` | reserved name for a future ai-service / Langfuse; **nothing is defined yet** | n/a |
 
-**Object storage.** With `storage` off, the API runs `Storage__Provider=local` (files go to the container's `wwwroot`, which is lost on redeploy and does not enforce `private/`: fine for a trial, not for real data). To use S3:
+**Object storage.** With `storage` off, the API runs `Storage__Provider=local`: files are written under `/app/wwwroot` of the api container, which is mounted from the named volume `api_files` so they survive redeploys (the one-shot `init` service makes the volume writable for the chiseled API user, UID 1654). Back that volume up with the database. The local provider serves everything from `wwwroot` and does not enforce `private/`, so prefer S3 for real data. To use S3:
 
 1. Set `COMPOSE_PROFILES=storage`, `FSH_STORAGE_PROVIDER=s3`, `FSH_S3_PUBLIC_URL=https://s3.example.com`, `RUSTFS_ACCESS_KEY`, `RUSTFS_SECRET_KEY` in the Environment tab.
 2. Add a Dokploy domain `s3.example.com` → service `rustfs`, port `9000`, HTTPS on. Traefik keeps the original `Host` header, which the presigned signature covers.
 3. Redeploy. `rustfs-init` creates the bucket `fsh` and opens anonymous read on `public/*` only.
+
+The deploy fails closed on a half-made configuration: `storage-guard` stops RustFS from starting with a blank access or secret key (it would fall back to its default credentials on a public domain), and `init` stops the API from starting with `FSH_STORAGE_PROVIDER=s3` when `FSH_S3_PUBLIC_URL` or a key is missing. Read the failing service's log for the message.
 
 Alternatively point `Storage__S3__*` at an external provider (Cloudflare R2, AWS S3) and skip the profile.
 

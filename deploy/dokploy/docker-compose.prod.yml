@@ -55,6 +55,51 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
 
+  # One-shot, always runs before the API. (1) Fails the deploy when the S3 provider is
+  # selected but not fully configured, instead of starting an API that hands out wrong file
+  # URLs. (2) Makes the local-storage volume writable for the API user: the chiseled image
+  # runs as APP_UID 1654 and a fresh named volume is root-owned.
+  init:
+    image: alpine:3.20
+    restart: "no"
+    environment:
+      FSH_STORAGE_PROVIDER: ${FSH_STORAGE_PROVIDER:-local}
+      FSH_S3_PUBLIC_URL: ${FSH_S3_PUBLIC_URL:-}
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-}
+    volumes:
+      - api_files:/app/wwwroot
+    command:
+      - sh
+      - -ec
+      - |
+        provider=$$(echo "$$FSH_STORAGE_PROVIDER" | tr 'A-Z' 'a-z')
+        if [ "$$provider" = "s3" ]; then
+          case "$$FSH_S3_PUBLIC_URL" in
+            http://*|https://*) ;;
+            *) echo "FSH_STORAGE_PROVIDER=s3 requires FSH_S3_PUBLIC_URL (an http(s) URL)"; exit 1 ;;
+          esac
+          [ -n "$$RUSTFS_ACCESS_KEY" ] && [ -n "$$RUSTFS_SECRET_KEY" ] ||
+            { echo "FSH_STORAGE_PROVIDER=s3 requires RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY"; exit 1; }
+        fi
+        chown -R 1654:1654 /app/wwwroot
+
+  # Profile `storage` only: refuses to start RustFS with blank credentials. RustFS falls back
+  # to its well-known default keys when they are empty, and this store is publicly routed.
+  storage-guard:
+    image: alpine:3.20
+    restart: "no"
+    profiles: [storage]
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-}
+    command:
+      - sh
+      - -ec
+      - |
+        [ -n "$$RUSTFS_ACCESS_KEY" ] && [ -n "$$RUSTFS_SECRET_KEY" ] ||
+          { echo "profile storage requires RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY (non-empty)"; exit 1; }
+
   # Profile `storage`: S3-compatible object store (RustFS). Off by default; the API
   # then uses the local provider (see README, "Profiles"). It joins dokploy-network
   # because browsers upload to it directly through presigned URLs.
@@ -62,6 +107,8 @@ services:
     image: rustfs/rustfs:1.0.0
     restart: unless-stopped
     profiles: [storage]
+    depends_on:
+      storage-guard: { condition: service_completed_successfully }
     environment:
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-}
@@ -84,6 +131,7 @@ services:
     restart: "no"
     profiles: [storage]
     depends_on:
+      storage-guard: { condition: service_completed_successfully }
       rustfs: { condition: service_healthy }
     environment:
       AWS_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY:-}
@@ -123,6 +171,11 @@ services:
       postgres: { condition: service_healthy }
       valkey:   { condition: service_healthy }
       migrator: { condition: service_completed_successfully }
+      init:     { condition: service_completed_successfully }
+    volumes:
+      # Root of the local storage provider (WebRootPath = /app/wwwroot). Without it,
+      # uploads die with the container on every redeploy.
+      - api_files:/app/wwwroot
     environment:
       <<: *modules
       DOTNET_ENVIRONMENT: Production
@@ -197,4 +250,5 @@ networks:
 volumes:
   pg_data:
   valkey_data:
+  api_files:
   rustfs_data:
