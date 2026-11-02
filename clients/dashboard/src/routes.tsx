@@ -118,6 +118,7 @@ const AccessRulesPage = lazyNamed(
   () => import("@/pages/identity/access-rules"),
   "AccessRulesPage",
 );
+const TransferPage = lazyNamed(() => import("@/pages/system/transfer"), "TransferPage");
 const SearchPage = lazyNamed(() => import("@/pages/search"), "SearchPage");
 
 /**
@@ -213,6 +214,7 @@ export const router = createBrowserRouter([
           { path: "system/audits", element: withSuspense(<AuditsPage />) },
           { path: "system/trash", element: withSuspense(<TrashPage />) },
           { path: "system/sessions", element: withSuspense(<SessionsPage />) },
+          { path: "system/transfer", element: withSuspense(<TransferPage />) },
           { path: "files", element: withSuspense(<MyFilesPage />) },
           { path: "search", element: withSuspense(<SearchPage />) },
           { path: "chat", element: withSuspense(<ChatPage />) },

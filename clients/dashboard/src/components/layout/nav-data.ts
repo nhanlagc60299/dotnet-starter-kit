@@ -1,5 +1,6 @@
 import {
   Activity,
+  ArrowDownUp,
   CreditCard,
   FolderOpen,
   FolderTree,
@@ -133,6 +134,14 @@ export const sections: NavSection[] = [
       // view-trash permission. Show the entry if the user can reach any tab; the
       // page hides the individual tabs they can't (see trash-permissions.ts).
       { to: "/system/trash", label: "Trash", icon: Trash2, anyPerm: ALL_TRASH_PERMISSIONS },
+      // Import and export each have their own permission; the page shows the halves the user holds.
+      {
+        to: "/system/transfer",
+        label: "Import / export",
+        icon: ArrowDownUp,
+        anyPerm: ["Permissions.Transfer.Export", "Permissions.Transfer.Import"],
+        module: "Transfer",
+      },
     ],
   },
 ];
