@@ -7,7 +7,7 @@
 | Service | Image | Mạng | Là gì |
 |---|---|---|---|
 | `db-roles`, `db-grants` | `postgres:18-alpine` | chỉ nội bộ | One-shot, mỗi lần deploy: role, extension và grant, trước và sau migrator (xem [Database roles](#database-roles)). |
-| `init` | `alpine:3.20` | chỉ nội bộ | One-shot: kiểm tra cấu hình storage và chỉnh quyền sở hữu volume `api_files`. |
+| `init` | `alpine:3.20` | chỉ nội bộ | One-shot: **từ chối deploy** nếu storage không phải S3 hoặc cấu hình S3 dở dang (provider `local` bị cấm trong production). |
 | `postgres` | `postgres:18-alpine` | chỉ nội bộ | Database. Không bao giờ truy cập được từ bên ngoài project. |
 | `valkey` | `valkey/valkey:9.1.0-alpine` | chỉ nội bộ | HybridCache L2, khoá Data Protection, kho idempotency (có mật khẩu + AOF). |
 | `migrator` | `ghcr.io/<GHCR_OWNER>/fsh-db-migrator` | chỉ nội bộ | One-shot `apply --seed` mỗi lần deploy; thoát 0 trước khi `api` khởi động. |
@@ -15,13 +15,13 @@
 | `admin` | build từ `clients/admin` | nội bộ + `dokploy-network` | Console cho operator (nginx), cổng **80**. |
 | `dashboard` | build từ `clients/dashboard` | nội bộ + `dokploy-network` | Dashboard cho tenant (nginx), cổng **80**. |
 | `backup` | build từ `deploy/dokploy/db-backup` | chỉ nội bộ | Luôn bật: `pg_dump` hằng ngày lên bucket tương thích S3 (R2) và kiểm tra restore hằng tháng; xem [Backup và restore](#backup-và-restore). |
-| `rustfs`, `rustfs-init` | `rustfs/rustfs`, `amazon/aws-cli` | profile `storage` | Object store tương thích S3, tuỳ chọn; xem [Profiles](#profiles). |
+| `rustfs`, `rustfs-init` | `rustfs/rustfs`, `amazon/aws-cli` | profile `storage` (bật mặc định qua `COMPOSE_PROFILES`) | Object store S3 đi kèm, nơi lưu file; bỏ profile chỉ khi dùng S3/R2 bên ngoài. Xem [Lưu file](#profiles). |
 
 `admin` và `dashboard` chưa có image trên registry, nên Dokploy build chúng trên VPS từ repository (lần deploy đầu mất vài phút).
 
 ## Deploy lần đầu, từng bước
 
-1. **DNS.** Tạo bản ghi `A` trỏ về VPS cho các host API, admin và dashboard (ví dụ `api.`, `admin.`, `app.`). Thêm cả host S3 nếu dùng profile `storage`.
+1. **DNS.** Tạo bản ghi `A` trỏ về VPS cho các host API, admin và dashboard (ví dụ `api.`, `admin.`, `app.`). Thêm cả host S3 (ví dụ `s3.`) cho service `rustfs`, trừ khi dùng S3/R2 bên ngoài.
 2. **Quyền truy cập GHCR.** VPS phải pull được package GHCR `fsh-api` và `fsh-db-migrator`: để chúng public, hoặc thêm credential registry trong Dokploy (Settings → Registry) và đăng nhập VPS bằng PAT có `read:packages`.
 3. **Tạo project.** Dokploy → Projects → Create Project → Create Service → **Compose**. Type: **Docker Compose** (không phải Stack; Stack không hỗ trợ `build:`).
 4. **Source.** Provider: GitHub (hoặc Git) → chọn repository và branch này. **Compose Path:** `./deploy/dokploy/docker-compose.prod.yml`.
@@ -33,6 +33,7 @@
    | `api.example.com` | `api` | `8080` |
    | `admin.example.com` | `admin` | `80` |
    | `app.example.com` | `dashboard` | `80` |
+   | `s3.example.com` | `rustfs` | `9000` |
 
    Dùng *Preview Compose* để xem các label Traefik mà Dokploy thêm vào trước khi deploy. `api`, `admin` và `dashboard` đã tham gia mạng external `dokploy-network` ngay trong file compose (tài liệu Dokploy yêu cầu điều này cho các service không phải service được gắn domain).
 7. **Deploy.** Bấm Deploy. Thứ tự do `depends_on` đảm bảo: `postgres` + `valkey` healthy, rồi `db-roles`, `migrator`, `db-grants` chạy lần lượt và phải thoát 0, rồi tới `api`, `admin`, `dashboard`. Nếu `migrator` lỗi thì không gì khác khởi động: đọc log của nó ở tab Logs.
@@ -113,7 +114,7 @@ Backup chỉ chứa **database**. Những thứ sau **không** nằm trong đó,
 |---|---|---|
 | **Giá trị tab Environment của Dokploy** (đặc biệt `BACKUP_S3_*`, `APP_*_PASSWORD`, `POSTGRES_PASSWORD`, `JWT_SIGNING_KEY`) | Không có `BACKUP_S3_*` thì không tải được backup; không có `JWT_SIGNING_KEY` thì mọi phiên đăng nhập cũ mất hiệu lực. Chúng chỉ nằm trên VPS. | Lưu một bản ở **ngoài VPS** (password manager), cập nhật mỗi khi đổi. |
 | **Khoá Data Protection** (volume `valkey_data`, khoá `DataProtection-Keys`) | API lưu khoá Data Protection **chỉ trong Valkey**; chúng mã hoá secret của webhook. Valkey mới sau DR có khoá mới, nên secret webhook đã lưu trong database **không giải mã được**. | Hoặc sao lưu volume `valkey_data` (snapshot VPS hoặc tính năng sao lưu volume của Dokploy; stack này chưa tự động hoá việc đó), hoặc chấp nhận và **cấp lại secret cho từng webhook endpoint** sau DR. |
-| **Volume `api_files`** (provider `local`) hoặc volume `rustfs_data` (profile `storage`) | File người dùng tải lên. **Không được sao lưu off-site.** | Xem [Lưu file off-site bằng R2](#lưu-file-off-site-bằng-r2). |
+| **Volume `rustfs_data`** (RustFS đi kèm) | File người dùng tải lên. **Không được sao lưu off-site**: mất VPS là mất file. | Snapshot VPS / sao lưu volume định kỳ, hoặc dùng S3/R2 bên ngoài: [Lưu file off-site bằng R2](#lưu-file-off-site-bằng-r2). |
 | Cache và kho idempotency trong Valkey | Dựng lại được. | Không cần. |
 
 Trình tự DR trên VPS mới: cài Dokploy, tạo lại project, dán Environment từ password manager, **deploy bình thường** (tạo role, schema rỗng, seed), rồi làm đúng quy trình dưới. (Nếu `valkey_data` đã được khôi phục thì khôi phục nó *trước* lần deploy.)
@@ -234,41 +235,40 @@ Script chỉ ping khi **thành công**, nên thiếu heartbeat = backup/verify h
 
 | Profile | Services | Mặc định |
 |---|---|---|
-| `storage` | `rustfs`, `rustfs-init` | tắt |
+| `storage` | `rustfs`, `rustfs-init` | bật (`COMPOSE_PROFILES=storage` trong `.env.example`); bỏ khi dùng S3/R2 bên ngoài |
 | `ai` | tên giữ chỗ cho ai-service / Langfuse sau này; **hiện chưa định nghĩa gì** | không áp dụng |
 
-**Lưu file.** Có ba cách, và **không cách nào trong hai cách đầu được sao lưu off-site**:
+**Lưu file. Production không bao giờ dùng provider `local`.** Provider `local` phục vụ mọi thứ dưới `wwwroot` (kể cả khoá `private/…` của module Files) cho người gọi ẩn danh qua `UseStaticFiles`, trước cả bước xác thực (xem `.agents/rules/storage.md`: chỉ dùng cho dev). Vì vậy `FSH_STORAGE_PROVIDER` mặc định là `s3`, và service `init` làm deploy thất bại nếu nó là giá trị khác. Chỉ còn hai cách, đều là S3:
 
 | Cách | Cấu hình | Dữ liệu nằm ở | Off-site? |
 |---|---|---|---|
-| Mặc định, provider `local` | không cần gì | volume `api_files` (mount tại `/app/wwwroot`) | **Không** |
-| Profile `storage` (RustFS tự host) | `COMPOSE_PROFILES=storage`, `FSH_STORAGE_PROVIDER=s3`, `FSH_S3_PUBLIC_URL`, `RUSTFS_*` | volume `rustfs_data` | **Không** |
-| S3 / R2 bên ngoài | `FSH_STORAGE_PROVIDER=s3`, `FSH_S3_*`, `RUSTFS_*` (không cần profile) | bucket bên ngoài | Có (do nhà cung cấp) |
+| **Mặc định**: RustFS đi kèm (profile `storage`) | `COMPOSE_PROFILES=storage` (đã có trong `.env.example`), `FSH_S3_PUBLIC_URL`, `RUSTFS_*` | volume `rustfs_data` | **Không** |
+| S3 / R2 bên ngoài | bỏ `COMPOSE_PROFILES`, đặt `FSH_S3_*`, `RUSTFS_*` | bucket bên ngoài | Có (do nhà cung cấp) |
 
-Với provider `local`, file ghi dưới `/app/wwwroot` của container api, được mount từ named volume `api_files` nên sống sót qua redeploy (service one-shot `init` chỉnh quyền volume cho user API của image chiseled, UID 1654). Provider `local` phục vụ mọi thứ từ `wwwroot` và không áp dụng `private/`, nên dữ liệu thật nên dùng S3. **Service `backup` chỉ sao lưu database**: mất VPS là mất `api_files`/`rustfs_data` trừ khi bạn tự snapshot chúng.
+Chọn RustFS làm mặc định vì nó đơn giản nhất mà vẫn an toàn: không cần tài khoản ngoài, và `rustfs-init` chỉ mở đọc ẩn danh cho `public/*` (còn `private/` cần chữ ký presigned). Đổi lại, **service `backup` chỉ sao lưu database**: file trong `rustfs_data` không có bản off-site, mất VPS là mất chúng trừ khi bạn tự snapshot volume, hoặc chuyển sang bucket R2 như dưới. Nếu một bản cũ từng chạy với provider `local`, file còn nằm trong volume `api_files` (compose không còn khai báo volume này nhưng không xoá nó): chép sang bucket trước khi dọn volume.
 
 **Dùng RustFS tự host (profile `storage`):**
 
-1. Trong tab Environment đặt `COMPOSE_PROFILES=storage`, `FSH_STORAGE_PROVIDER=s3`, `FSH_S3_PUBLIC_URL=https://s3.example.com`, `RUSTFS_ACCESS_KEY`, `RUSTFS_SECRET_KEY`.
+1. Trong tab Environment giữ `COMPOSE_PROFILES=storage`, `FSH_STORAGE_PROVIDER=s3`, đặt `FSH_S3_PUBLIC_URL=https://s3.example.com`, `RUSTFS_ACCESS_KEY`, `RUSTFS_SECRET_KEY`.
 2. Thêm domain Dokploy `s3.example.com` → service `rustfs`, cổng `9000`, bật HTTPS. Traefik giữ nguyên header `Host` gốc, thứ mà chữ ký presigned URL bao phủ.
-3. Redeploy. `rustfs-init` tạo bucket (`fsh`, hoặc `FSH_S3_BUCKET`) và mở quyền đọc ẩn danh chỉ cho `public/*`.
+3. Redeploy. `rustfs-init` tạo bucket (`fsh`, hoặc `FSH_S3_BUCKET`) và mở quyền đọc ẩn danh chỉ cho `public/*`; `api` chờ nó xong mới khởi động.
 
-Deploy **fail closed** với cấu hình dở dang: `storage-guard` không cho RustFS khởi động với access/secret key trống (nó sẽ quay về key mặc định trên một domain public), và `init` không cho API khởi động với `FSH_STORAGE_PROVIDER=s3` khi `FSH_S3_PUBLIC_URL`, `FSH_S3_SERVICE_URL` hoặc key thiếu/không phải URL http(s). Đọc log của service lỗi để thấy thông báo.
+Deploy **fail closed** với cấu hình dở dang: `storage-guard` không cho RustFS khởi động với access/secret key trống (nó sẽ quay về key mặc định trên một domain public), và `init` không cho API khởi động khi provider không phải `s3`, khi `FSH_S3_PUBLIC_URL`, `FSH_S3_SERVICE_URL` hoặc key thiếu/không phải URL http(s), hoặc khi `FSH_S3_SERVICE_URL` trỏ vào RustFS đi kèm mà `COMPOSE_PROFILES` không có `storage`. Đọc log của service lỗi để thấy thông báo.
 
 ### Lưu file off-site bằng R2
 
-Trỏ `Storage__S3__*` vào một bucket R2 (hoặc S3 khác) và bỏ qua profile. Tất cả đặt được từ tab Environment:
+Muốn file có bản off-site: **xoá dòng `COMPOSE_PROFILES=storage`** (không chạy RustFS) và trỏ vào một bucket R2 (hoặc S3 khác). Tất cả đặt được từ tab Environment:
 
 | Biến | Giá trị cho R2 | Ghi chú |
 |---|---|---|
 | `FSH_STORAGE_PROVIDER` | `s3` | |
-| `FSH_S3_SERVICE_URL` | `https://<account-id>.r2.cloudflarestorage.com` | Nơi API tự gọi. Mặc định `http://rustfs:9000`. |
+| `FSH_S3_SERVICE_URL` | `https://<account-id>.r2.cloudflarestorage.com` | Nơi API tự gọi. Mặc định `http://rustfs:9000` (cần profile `storage`). |
 | `FSH_S3_PUBLIC_URL` | cùng endpoint trên | Endpoint dùng để ký presigned URL cho trình duyệt (gốc URL, không có path). |
 | `FSH_S3_BUCKET` | tên bucket **file** (mặc định `fsh`) | Khác bucket backup; bucket phải tạo sẵn. |
-| `FSH_S3_PUBLIC_BASE_URL` | domain phục vụ file public, ví dụ `https://files.example.com` | Gắn custom domain (hoặc bật public access) cho bucket trong R2. Bỏ trống thì mặc định `<FSH_S3_PUBLIC_URL>/<bucket>`, đúng cho RustFS dạng path-style, thường **không** đúng cho R2. |
+| `FSH_S3_PUBLIC_BASE_URL` | domain phục vụ file public, ví dụ `https://files.example.com` | Chỉ khi domain đó chỉ lộ `/public/*` (xem cảnh báo bên dưới). Bỏ trống thì mặc định `<FSH_S3_PUBLIC_URL>/<bucket>`, đúng cho RustFS dạng path-style, thường **không** đúng cho R2. |
 | `RUSTFS_ACCESS_KEY`, `RUSTFS_SECRET_KEY` | access key / secret của token R2 | Tên biến giữ nguyên dù không dùng RustFS. Dùng token riêng cho bucket file. |
 
-Trong R2 còn phải đặt CORS cho bucket file cho phép origin `FSH_ADMIN_URL` và `FSH_DASHBOARD_URL` (phương thức `PUT`, `GET`, header `Content-Type`), vì trình duyệt upload thẳng lên presigned URL. Lưu ý: cấu hình này chưa được thử với R2 thật trong repo (chỉ kiểm bằng `docker compose config` và RustFS); thử một lần upload sau khi cấu hình.
+Trong R2 còn phải đặt CORS cho bucket file cho phép origin `FSH_ADMIN_URL` và `FSH_DASHBOARD_URL` (phương thức `PUT`, `GET`, header `Content-Type`), vì trình duyệt upload thẳng lên presigned URL. **Cảnh báo:** custom domain hoặc `r2.dev` của R2 phục vụ *cả bucket*, tức cả khoá `private/…`, cho mọi người. Chỉ gắn nó khi có Transform/WAF rule của Cloudflare giới hạn ở đường dẫn `/public/*`; nếu không, đừng bật public access cho bucket file. Lưu ý: cấu hình R2 chưa được thử với R2 thật trong repo (chỉ kiểm bằng `docker compose config` và RustFS); thử một lần upload và một lần tải file `private/` sau khi cấu hình.
 
 ## Module switches
 
@@ -292,7 +292,7 @@ Thêm một kênh thông báo (e-mail, Telegram, Slack) và gắn vào cả ba. 
 |---|---|
 | `... is required` khi deploy | Một biến bắt buộc trong tab Environment còn trống; thông báo nêu tên biến. |
 | `network dokploy-network declared as external, but could not be found` | Không chạy dưới Dokploy (nó tạo mạng này), hoặc mạng của Dokploy đã bị xoá. Chạy local: `docker network create dokploy-network`. |
-| `api` không bao giờ khởi động | `db-roles`, `migrator` hoặc `db-grants` thoát khác 0. Xem log của chúng: thiếu/không an toàn `APP_*_PASSWORD`, sai `POSTGRES_PASSWORD` (nếu volume có trước khi đổi mật khẩu), hoặc `JWT_SIGNING_KEY` chứa `replace-with`. Hoặc `init` lỗi vì cấu hình storage (xem log của nó). |
+| `api` không bao giờ khởi động | `db-roles`, `migrator` hoặc `db-grants` thoát khác 0. Xem log của chúng: thiếu/không an toàn `APP_*_PASSWORD`, sai `POSTGRES_PASSWORD` (nếu volume có trước khi đổi mật khẩu), hoặc `JWT_SIGNING_KEY` chứa `replace-with`. Hoặc `init` lỗi vì cấu hình storage (provider không phải `s3`, thiếu `FSH_S3_PUBLIC_URL`/key, hoặc thiếu `COMPOSE_PROFILES=storage` khi dùng RustFS đi kèm): xem log của nó. |
 | Redeploy mà vẫn chạy image cũ | `FSH_IMAGE_TAG` không phải tag CI đã đẩy (hiện chỉ có `dev-latest`). `api`/`migrator` đã `pull_policy: always`, nên không phải do cache. |
 | `pull access denied` cho `fsh-api` | Package GHCR là private và VPS không có credential (bước 2), hoặc `GHCR_OWNER` sai. |
 | 404 / 502 từ Traefik trên một domain | Tên service hoặc cổng ở tab Domains không khớp bảng trên, hoặc service không nằm trên `dokploy-network`. |

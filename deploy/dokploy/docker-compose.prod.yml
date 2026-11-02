@@ -123,44 +123,49 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
 
-  # One-shot, always runs before the API. (1) Fails the deploy when the S3 provider is
-  # selected but not fully configured, instead of starting an API that hands out wrong file
-  # URLs. (2) Makes the local-storage volume writable for the API user: the chiseled image
-  # runs as APP_UID 1654 and a fresh named volume is root-owned.
+  # One-shot, always runs before the API: fails the deploy unless object storage is S3 and fully
+  # configured. The `local` provider is refused on purpose: it serves everything under wwwroot
+  # (including private/) to anonymous callers through UseStaticFiles, so it is dev-only
+  # (.agents/rules/storage.md). Also catches "bundled RustFS selected but its profile is off".
   init:
     image: alpine:3.20
     restart: "no"
     environment:
-      FSH_STORAGE_PROVIDER: ${FSH_STORAGE_PROVIDER:-local}
+      FSH_STORAGE_PROVIDER: ${FSH_STORAGE_PROVIDER:-s3}
       FSH_S3_PUBLIC_URL: ${FSH_S3_PUBLIC_URL:-}
       FSH_S3_SERVICE_URL: ${FSH_S3_SERVICE_URL:-http://rustfs:9000}
       FSH_S3_PUBLIC_BASE_URL: ${FSH_S3_PUBLIC_BASE_URL:-}
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-}
-    volumes:
-      - api_files:/app/wwwroot
+      COMPOSE_PROFILES: ${COMPOSE_PROFILES:-}
     command:
       - sh
       - -ec
       - |
         provider=$$(echo "$$FSH_STORAGE_PROVIDER" | tr 'A-Z' 'a-z')
-        if [ "$$provider" = "s3" ]; then
-          case "$$FSH_S3_PUBLIC_URL" in
-            http://*|https://*) ;;
-            *) echo "FSH_STORAGE_PROVIDER=s3 requires FSH_S3_PUBLIC_URL (an http(s) URL)"; exit 1 ;;
-          esac
-          case "$$FSH_S3_SERVICE_URL" in
-            http://*|https://*) ;;
-            *) echo "FSH_S3_SERVICE_URL must be an http(s) URL"; exit 1 ;;
-          esac
-          case "$$FSH_S3_PUBLIC_BASE_URL" in
-            ""|http://*|https://*) ;;
-            *) echo "FSH_S3_PUBLIC_BASE_URL must be an http(s) URL"; exit 1 ;;
-          esac
-          [ -n "$$RUSTFS_ACCESS_KEY" ] && [ -n "$$RUSTFS_SECRET_KEY" ] ||
-            { echo "FSH_STORAGE_PROVIDER=s3 requires RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY"; exit 1; }
-        fi
-        chown -R 1654:1654 /app/wwwroot
+        [ "$$provider" = "s3" ] ||
+          { echo "FSH_STORAGE_PROVIDER must be s3 (got '$$FSH_STORAGE_PROVIDER'): the local provider exposes private files publicly. See deploy/dokploy/README.md, 'Lưu file'."; exit 1; }
+        case "$$FSH_S3_PUBLIC_URL" in
+          http://*|https://*) ;;
+          *) echo "FSH_S3_PUBLIC_URL is required (an http(s) URL): the public endpoint of the S3 store"; exit 1 ;;
+        esac
+        case "$$FSH_S3_SERVICE_URL" in
+          http://*|https://*) ;;
+          *) echo "FSH_S3_SERVICE_URL must be an http(s) URL"; exit 1 ;;
+        esac
+        case "$$FSH_S3_PUBLIC_BASE_URL" in
+          ""|http://*|https://*) ;;
+          *) echo "FSH_S3_PUBLIC_BASE_URL must be an http(s) URL"; exit 1 ;;
+        esac
+        [ -n "$$RUSTFS_ACCESS_KEY" ] && [ -n "$$RUSTFS_SECRET_KEY" ] ||
+          { echo "RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY are required (the S3 credentials, for RustFS or an external store)"; exit 1; }
+        case "$$FSH_S3_SERVICE_URL" in
+          http://rustfs|http://rustfs:*|http://rustfs/*)
+            case ",$$COMPOSE_PROFILES," in
+              *,storage,*) ;;
+              *) echo "FSH_S3_SERVICE_URL points at the bundled RustFS but COMPOSE_PROFILES does not include 'storage'. Set COMPOSE_PROFILES=storage, or point FSH_S3_SERVICE_URL at an external S3/R2 endpoint."; exit 1 ;;
+            esac ;;
+        esac
 
   # Profile `storage` only: refuses to start RustFS with blank credentials. RustFS falls back
   # to its well-known default keys when they are empty, and this store is publicly routed.
@@ -178,8 +183,9 @@ services:
         [ -n "$$RUSTFS_ACCESS_KEY" ] && [ -n "$$RUSTFS_SECRET_KEY" ] ||
           { echo "profile storage requires RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY (non-empty)"; exit 1; }
 
-  # Profile `storage`: S3-compatible object store (RustFS). Off by default; the API
-  # then uses the local provider (see README, "Profiles"). It joins dokploy-network
+  # Profile `storage`: S3-compatible object store (RustFS), the default file store
+  # (COMPOSE_PROFILES=storage in .env.example). Leave the profile off only when
+  # FSH_S3_SERVICE_URL points at an external S3/R2 bucket. It joins dokploy-network
   # because browsers upload to it directly through presigned URLs.
   rustfs:
     image: rustfs/rustfs:1.0.0
@@ -255,10 +261,8 @@ services:
       migrator: { condition: service_completed_successfully }
       init:     { condition: service_completed_successfully }
       db-grants: { condition: service_completed_successfully }
-    volumes:
-      # Root of the local storage provider (WebRootPath = /app/wwwroot). Without it,
-      # uploads die with the container on every redeploy.
-      - api_files:/app/wwwroot
+      # Bucket exists before the API starts; ignored when the storage profile is off (external S3).
+      rustfs-init: { condition: service_completed_successfully, required: false }
     environment:
       <<: *modules
       DOTNET_ENVIRONMENT: Production
@@ -268,8 +272,8 @@ services:
       CachingOptions__Redis: valkey,password=${REDIS_PASSWORD}
       JwtOptions__SigningKey: ${JWT_SIGNING_KEY}
       Seed__DefaultAdminPassword: ${SEED_ADMIN_PASSWORD}
-      # `local` unless the storage profile is on; the S3 keys below are ignored by the local provider.
-      Storage__Provider: ${FSH_STORAGE_PROVIDER:-local}
+      # Always s3: `init` refuses anything else (the local provider serves private/ anonymously).
+      Storage__Provider: ${FSH_STORAGE_PROVIDER:-s3}
       # What the API itself calls: the bundled RustFS by default, or an external S3/R2 endpoint.
       Storage__S3__ServiceUrl: ${FSH_S3_SERVICE_URL:-http://rustfs:9000}
       # Presigned URLs go to browsers, which cannot resolve rustfs:9000: the public endpoint.
@@ -336,6 +340,5 @@ networks:
 volumes:
   pg_data:
   valkey_data:
-  api_files:
   rustfs_data:
   backup_work:
