@@ -47,10 +47,15 @@ type RowErrors = Partial<Record<"subject" | "action" | "condition", string>>;
 /** Server errors from the last failed save of a role, mapped onto row ids. */
 type SaveErrors = { role: string; rows: Record<string, string[]>; general: string[] };
 
+// Row ids only key React rows within this page, so a counter is enough (and,
+// unlike crypto.randomUUID, works outside secure contexts).
+let lastRowId = 0;
+const nextRowId = () => `row-${++lastRowId}`;
+
 function toRow(g: AccessGrantDto): Row {
   const on = g.condition !== null && Object.keys(g.condition).length > 0;
   return {
-    id: crypto.randomUUID(),
+    id: nextRowId(),
     subject: g.subject,
     action: g.action,
     conditionOn: on,
@@ -223,6 +228,12 @@ function GrantsEditor({ role, canManage }: { role: string; canManage: boolean })
   const dirty = drafts[role] !== undefined && canonical(drafts[role]) !== canonical(serverRows);
   const clientErrors = validateRows(rows);
   const hasClientErrors = Object.keys(clientErrors).length > 0;
+  // Errors on a still-empty field stay hidden in the row, so say why Save is off.
+  const saveHint = !dirty || !hasClientErrors
+    ? null
+    : rows.some((r) => !r.subject.trim() || !r.action.trim())
+      ? "Fill in subject and action"
+      : "Fix the highlighted fields";
   const errorsHere = saveErrors?.role === role ? saveErrors : null;
 
   const edit = (next: Row[], touchedId?: string) => {
@@ -264,7 +275,12 @@ function GrantsEditor({ role, canManage }: { role: string; canManage: boolean })
           {dirty && <EntityStatusBadge tone="warning" withDot>Unsaved</EntityStatusBadge>}
         </div>
         {canManage && (
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            {saveHint && (
+              <span id={`save-hint-${role}`} className="text-[12px] text-[var(--color-muted-foreground)]">
+                {saveHint}
+              </span>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -279,6 +295,7 @@ function GrantsEditor({ role, canManage }: { role: string; canManage: boolean })
             <Button
               size="sm"
               disabled={!dirty || hasClientErrors || save.isPending}
+              aria-describedby={saveHint ? `save-hint-${role}` : undefined}
               onClick={() => save.mutate({ role, rows })}
             >
               {save.isPending ? "Saving…" : "Save rules"}
@@ -335,7 +352,7 @@ function GrantsEditor({ role, canManage }: { role: string; canManage: boolean })
 }
 
 function newRow(): Row {
-  return { id: crypto.randomUUID(), subject: "", action: "", conditionOn: false, conditionText: "" };
+  return { id: nextRowId(), subject: "", action: "", conditionOn: false, conditionText: "" };
 }
 
 function GrantRow({

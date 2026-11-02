@@ -47,6 +47,9 @@ test("edits a role's grants and saves the whole set", async ({ page }) => {
   await expect(editor.getByLabel("Condition (JSON)")).toHaveValue(/\$CURRENT_USER/);
 
   await editor.getByRole("button", { name: "Add grant" }).click();
+  // A blank new row disables Save; the reason is spelled out.
+  await expect(editor.getByRole("button", { name: "Save rules" })).toBeDisabled();
+  await expect(editor.getByText("Fill in subject and action")).toBeVisible();
   await editor.getByLabel("Subject of grant 2").fill("catalog:brands");
   await editor.getByLabel("Action of grant 2").fill("update");
   await editor.getByRole("switch", { name: "Limit grant 2 with a condition" }).click();
