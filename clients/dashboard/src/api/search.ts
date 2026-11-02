@@ -53,21 +53,27 @@ export function splitMarks(snippet: string): { text: string; mark: boolean }[] {
 }
 
 /**
- * Where a hit may link to: an app-relative path (`/…`, not `//host`) or an
- * absolute http(s) URL. Anything else (javascript:, data:, garbage) gets no link.
+ * Where a hit may link to. An app-relative path (`/…`) must resolve to this
+ * origin: browsers strip tab/newline and read `\` as `/`, so "/\t/evil.com",
+ * "/\n/evil.com", "//evil.com" and "/\\evil.com" all point at another host and
+ * get no link. An absolute http(s) URL opens externally. Anything else
+ * (javascript:, data:, bare words) gets no link.
  */
-export function safeHitHref(url: string | null): { href: string; external: boolean } | null {
+export function safeHitHref(
+  url: string | null,
+  origin: string = window.location.origin,
+): { href: string; external: boolean } | null {
   if (!url) return null;
-  if (url.startsWith("/") && !url.startsWith("//") && !url.startsWith("/\\")) {
-    return { href: url, external: false };
-  }
+  let parsed: URL;
   try {
-    const parsed = new URL(url);
-    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-      return { href: parsed.href, external: true };
-    }
+    parsed = new URL(url, origin);
   } catch {
-    /* not a URL */
+    return null;
   }
-  return null;
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  if (url.startsWith("/")) {
+    if (parsed.origin !== origin) return null;
+    return { href: parsed.pathname + parsed.search + parsed.hash, external: false };
+  }
+  return /^https?:\/\//i.test(url) ? { href: parsed.href, external: true } : null;
 }

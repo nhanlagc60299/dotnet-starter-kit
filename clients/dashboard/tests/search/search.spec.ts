@@ -60,6 +60,30 @@ test("searches, highlights matches as text and filters by type", async ({ page }
   expect(seen.at(-1)?.searchParams.get("entityType")).toBe("tickets");
 });
 
+test("links only same-origin paths and http(s) URLs", async ({ page }) => {
+  const hostile = ["/\t/evil.com", "/\n/evil.com", "//evil.com", "/\\evil.com", "javascript:alert(1)", "evil.com"];
+  const hit = (title: string, url: string) => ({ entityType: "t", entityId: title, title, snippet: null, url, rank: 1 });
+  await mockJsonResponse(page, "**/api/v1/search?**", paged([
+    ...hostile.map((url, i) => hit(`Hostile ${i}`, url)),
+    hit("Inside", "/catalog/brands?page=2#top"),
+    hit("Outside", "https://example.com/docs"),
+  ]));
+
+  await page.goto("/search");
+  await page.getByPlaceholder("Search titles and text…").fill("x");
+  const results = page.getByRole("list", { name: "Search results" });
+  await expect(results.getByRole("link", { name: "Inside" })).toHaveAttribute("href", "/catalog/brands?page=2#top");
+  const outside = results.getByRole("link", { name: "Outside" });
+  await expect(outside).toHaveAttribute("href", "https://example.com/docs");
+  await expect(outside).toHaveAttribute("target", "_blank");
+  await expect(outside).toHaveAttribute("rel", "noopener noreferrer");
+  for (let i = 0; i < hostile.length; i++) {
+    await expect(results.getByText(`Hostile ${i}`)).toBeVisible();
+    await expect(results.getByRole("link", { name: `Hostile ${i}` })).toHaveCount(0);
+  }
+  await expect(results.getByRole("link")).toHaveCount(2);
+});
+
 test("shows the API's validation message", async ({ page }) => {
   await mockProblemDetails(page, "**/api/v1/search?**", 400, {
     title: "Validation failed",
