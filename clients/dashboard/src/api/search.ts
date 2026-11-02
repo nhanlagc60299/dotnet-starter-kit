@@ -56,7 +56,7 @@ export function splitMarks(snippet: string): { text: string; mark: boolean }[] {
  * Where a hit may link to. An app-relative path (`/…`) must resolve to this
  * origin: browsers strip tab/newline and read `\` as `/`, so "/\t/evil.com",
  * "/\n/evil.com", "//evil.com" and "/\\evil.com" all point at another host and
- * get no link. An absolute http(s) URL opens externally. Anything else
+ * get no link, as does a path that normalises to "//…" ("/..//evil.com"). An absolute http(s) URL opens externally. Anything else
  * (javascript:, data:, bare words) gets no link.
  */
 export function safeHitHref(
@@ -73,7 +73,10 @@ export function safeHitHref(
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
   if (url.startsWith("/")) {
     if (parsed.origin !== origin) return null;
-    return { href: parsed.pathname + parsed.search + parsed.hash, external: false };
+    const href = parsed.pathname + parsed.search + parsed.hash;
+    // Dot segments can normalise to a path that starts with "//" ("/..//evil.com"),
+    // which a router would treat as protocol-relative: allow exactly one leading slash.
+    return /^\/(?![/\\])/.test(href) ? { href, external: false } : null;
   }
   return /^https?:\/\//i.test(url) ? { href: parsed.href, external: true } : null;
 }

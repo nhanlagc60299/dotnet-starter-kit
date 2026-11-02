@@ -61,7 +61,9 @@ test("searches, highlights matches as text and filters by type", async ({ page }
 });
 
 test("links only same-origin paths and http(s) URLs", async ({ page }) => {
-  const hostile = ["/\t/evil.com", "/\n/evil.com", "//evil.com", "/\\evil.com", "javascript:alert(1)", "evil.com"];
+  const hostile = ["/\t/evil.com", "/\n/evil.com", "//evil.com", "/\\evil.com", "javascript:alert(1)", "evil.com",
+    // Same-origin on parse, but the normalised path starts with "//".
+    "/..//evil.com", "/.//evil.com", "/a/..//evil.com", "/%2e%2e//evil.com"];
   const hit = (title: string, url: string) => ({ entityType: "t", entityId: title, title, snippet: null, url, rank: 1 });
   await mockJsonResponse(page, "**/api/v1/search?**", paged([
     ...hostile.map((url, i) => hit(`Hostile ${i}`, url)),
