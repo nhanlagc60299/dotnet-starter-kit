@@ -194,6 +194,9 @@ public sealed class ConditionCompilerTests
     [InlineData("""{"$and": ["x"]}""")]
     [InlineData("""{"$not": [{"title": "a"}]}""")]
     [InlineData("""{"$xor": []}""")]
+    // One bad node drops the whole grant: under $not, failing only that node would turn it into "match everything".
+    [InlineData("""{"$not": {"noSuch": 1}}""")]
+    [InlineData("""{"$or": [{"title": "a"}, {"noSuch": 1}]}""")]
     [InlineData("""{"title.length": 1}""")]
     public void TryBuild_Should_FailClosed_When_ConditionIsUnusable(string json)
     {

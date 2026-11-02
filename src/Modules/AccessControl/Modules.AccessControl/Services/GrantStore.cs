@@ -11,14 +11,24 @@ public sealed record CachedGrant(string Subject, string Action, string? Conditio
 
 /// <summary>
 /// The grants of a role in the current tenant, cached in <see cref="HybridCache"/> per (tenant, role) and evicted
-/// by <see cref="InvalidateAsync"/> after every write. Peer nodes keep their L1 copy for up to the 2-minute local
-/// expiration (no backplane, see caching.md).
+/// by <see cref="InvalidateAsync"/> after every write; entries expire after one minute (<see cref="EntryOptions"/>).
 /// </summary>
 public sealed class GrantStore(
     AccessControlDbContext db,
     HybridCache cache,
     IMultiTenantContextAccessor<AppTenantInfo> tenantAccessor)
 {
+    /// <summary>
+    /// One minute in both tiers bounds how long a revoked grant can survive: a read that overlaps a PUT can put the
+    /// old set back after <see cref="InvalidateAsync"/>, and peers keep their L1 copy (no backplane). The cost is one
+    /// small indexed query per (tenant, role) per node per minute.
+    /// </summary>
+    internal static readonly HybridCacheEntryOptions EntryOptions = new()
+    {
+        Expiration = TimeSpan.FromMinutes(1),
+        LocalCacheExpiration = TimeSpan.FromMinutes(1),
+    };
+
     public async Task<CachedGrant[]> GetAsync(string role, CancellationToken ct = default)
     {
         if (TenantId() is not { } tenantId) return [];
@@ -31,6 +41,7 @@ public sealed class GrantStore(
                 .Select(g => new CachedGrant(g.Subject, g.Action, g.Condition))
                 .ToArrayAsync(token)
                 .ConfigureAwait(false),
+            EntryOptions,
             cancellationToken: ct).ConfigureAwait(false);
     }
 
