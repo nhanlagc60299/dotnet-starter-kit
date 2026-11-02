@@ -98,7 +98,9 @@ function useTransferJob(id: string | null, busy: (status: TransferJobStatus) => 
     queryKey: ["transfer", "jobs", id],
     queryFn: () => getTransferJob(id!),
     enabled: id !== null,
-    refetchInterval: (q) => (q.state.data && busy(q.state.data.status) ? POLL_MS : false),
+    // Stop on an error (shown below the panel) instead of hammering a 403/404 every second.
+    refetchInterval: (q) =>
+      q.state.data && !q.state.error && busy(q.state.data.status) ? POLL_MS : false,
   });
 }
 
