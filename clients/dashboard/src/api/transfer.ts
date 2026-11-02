@@ -40,6 +40,14 @@ export type TransferJobDto = {
 export type TransferEntityTypeDto = { entityType: string; canExport: boolean; canImport: boolean };
 
 const BASE = "/api/v1/transfer";
+
+/**
+ * Mirrors the default of TransferOptions.MaxUploadBytes (200 MiB) in
+ * src/Modules/Transfer/Modules.Transfer/TransferOptions.cs. No endpoint exposes
+ * the configured value, so update this if a deployment changes it; the API
+ * still enforces the real limit.
+ */
+export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 // Uploads are validated in full before the response; give big archives time.
 const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 

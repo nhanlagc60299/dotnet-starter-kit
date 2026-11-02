@@ -1,5 +1,10 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 import {
   ArrowDownUp,
   Check,
@@ -15,6 +20,7 @@ import {
   downloadExport,
   getTransferEntityTypes,
   getTransferJob,
+  MAX_UPLOAD_BYTES,
   previewImport,
   TRANSFER_EXPORT_PERMISSION,
   TRANSFER_IMPORT_PERMISSION,
@@ -171,7 +177,7 @@ function ExportPanel({ types }: { types: TransferEntityTypeDto[] }) {
       </div>
 
       {current && (
-        <JobCard job={current}>
+        <JobCard job={current} poll={job}>
           {current.status === "Succeeded" && (
             <>
               <p className="text-[12.5px] text-[var(--color-muted-foreground)]">
@@ -199,7 +205,7 @@ function ExportPanel({ types }: { types: TransferEntityTypeDto[] }) {
           )}
         </JobCard>
       )}
-      {job.isError && <ErrorBand message={describe(job.error)} />}
+      {job.isError && !current && <ErrorBand message={describe(job.error)} />}
     </Panel>
   );
 }
@@ -215,6 +221,7 @@ function ImportPanel({ types }: { types: TransferEntityTypeDto[] }) {
   const [jobId, setJobId] = useState<string | null>(null);
   const [mode, setMode] = useState<TransferMode>("CreateOnly");
   const [preview, setPreview] = useState<PreviewState | null>(null);
+  const [tooBig, setTooBig] = useState<string | null>(null);
   // For an import, Pending is "uploaded, waiting for apply": only Running polls.
   const job = useTransferJob(jobId, (s) => s === "Running");
   const current = job.data;
@@ -284,9 +291,10 @@ function ImportPanel({ types }: { types: TransferEntityTypeDto[] }) {
                   {upload.isPending ? "Checking archive…" : "Choose a .zip archive"}
                 </span>
                 <span className="text-[11.5px] text-[var(--color-muted-foreground)]">
+                  Up to {formatBytes(MAX_UPLOAD_BYTES)} ·{" "}
                   {types.length > 0
-                    ? `Importable here: ${types.map((t) => t.entityType).join(", ")}`
-                    : "No type is importable for you right now."}
+                    ? `importable here: ${types.map((t) => t.entityType).join(", ")}`
+                    : "no type is importable for you right now."}
                 </span>
                 <input
                   type="file"
@@ -297,10 +305,20 @@ function ImportPanel({ types }: { types: TransferEntityTypeDto[] }) {
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     e.target.value = "";
-                    if (file) upload.mutate(file);
+                    if (!file) return;
+                    if (file.size > MAX_UPLOAD_BYTES) {
+                      upload.reset();
+                      setTooBig(
+                        `${file.name} is ${formatBytes(file.size)}; the limit is ${formatBytes(MAX_UPLOAD_BYTES)}.`,
+                      );
+                      return;
+                    }
+                    setTooBig(null);
+                    upload.mutate(file);
                   }}
                 />
               </label>
+              {tooBig && <ErrorBand message={tooBig} />}
               {upload.isError && <ErrorBand message={describe(upload.error)} />}
             </>
           )}
@@ -351,7 +369,7 @@ function ImportPanel({ types }: { types: TransferEntityTypeDto[] }) {
 
         <Step n={4} title="Status" active={step === 4} done={current?.status === "Succeeded"}>
           {current && applied && (
-            <JobCard job={current}>
+            <JobCard job={current} poll={job}>
               {current.summary && current.status !== "Running" && (
                 <SummaryView summary={current.summary} caption={`Applied with ${current.mode ?? mode}`} />
               )}
@@ -369,7 +387,7 @@ function ImportPanel({ types }: { types: TransferEntityTypeDto[] }) {
           )}
         </Step>
       </ol>
-      {job.isError && <ErrorBand message={describe(job.error)} />}
+      {job.isError && !current && <ErrorBand message={describe(job.error)} />}
     </Panel>
   );
 }
@@ -445,22 +463,46 @@ function Step({
   );
 }
 
-function JobCard({ job, children }: { job: TransferJobDto; children?: React.ReactNode }) {
+function JobCard({
+  job,
+  poll,
+  children,
+}: {
+  job: TransferJobDto;
+  /** The polling query, so a failed refresh can be shown and retried here. */
+  poll: UseQueryResult<TransferJobDto>;
+  children?: React.ReactNode;
+}) {
   const busy = job.status === "Running" || (job.kind === "Export" && job.status === "Pending");
+  // Polling stops after a failed fetch; Retry refetches, and a success resumes it.
+  const pollFailed = poll.isError && !poll.isFetching;
   return (
-    <div
-      aria-live="polite"
-      className="fsh-enter space-y-2.5 rounded-lg border border-[var(--color-border)] bg-[oklch(from_var(--color-muted)_l_c_h_/_0.35)] p-3.5"
-    >
-      <div className="flex items-center gap-2">
-        <EntityStatusBadge tone={STATUS_TONE[job.status]} withDot>
-          {job.status}
-        </EntityStatusBadge>
-        {busy && <Loader2 aria-hidden className="size-3.5 animate-spin text-[var(--color-muted-foreground)]" />}
+    <div className="fsh-enter space-y-2.5 rounded-lg border border-[var(--color-border)] bg-[oklch(from_var(--color-muted)_l_c_h_/_0.35)] p-3.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span aria-live="polite">
+          <EntityStatusBadge tone={STATUS_TONE[job.status]} withDot>
+            {job.status}
+          </EntityStatusBadge>
+        </span>
+        {busy && !pollFailed && (
+          <Loader2 aria-hidden className="size-3.5 animate-spin text-[var(--color-muted-foreground)]" />
+        )}
         <span className="text-[12px] text-[var(--color-muted-foreground)]">
-          {busy ? "Working… this page updates by itself." : job.entityTypes.join(", ")}
+          {pollFailed
+            ? "Status updates paused."
+            : busy
+              ? "Working… this page updates by itself."
+              : job.entityTypes.join(", ")}
         </span>
       </div>
+      {pollFailed && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 text-[12.5px] text-[var(--color-destructive)]">
+          <span>Couldn't refresh the status: {describe(poll.error)}</span>
+          <Button size="xs" variant="outline" onClick={() => void poll.refetch()}>
+            Retry
+          </Button>
+        </div>
+      )}
       {job.status === "Failed" && job.error && (
         <p className="text-[12.5px] text-[var(--color-destructive)]">{job.error}</p>
       )}

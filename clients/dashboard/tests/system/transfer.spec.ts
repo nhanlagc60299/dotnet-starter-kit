@@ -141,3 +141,52 @@ test("shows why an uploaded archive was refused", async ({ page }) => {
   });
   await expect(page.getByText("The archive has no manifest.json.")).toBeVisible();
 });
+
+test("stops polling after a failed status fetch and resumes on Retry", async ({ page }) => {
+  await page.route("**/api/v1/transfer/exports", (route) => route.fulfill({ status: 202, json: job({}) }));
+  let failing = true;
+  let polls = 0;
+  await page.route("**/api/v1/transfer/jobs/*", (route) => {
+    polls++;
+    return failing
+      ? route.fulfill({ status: 500, contentType: "application/problem+json", body: JSON.stringify({ title: "Server error", status: 500 }) })
+      : route.fulfill({ json: job({ status: "Succeeded", sizeBytes: 10 }) });
+  });
+
+  await page.goto("/system/transfer");
+  const panel = page.getByRole("region", { name: "Export" });
+  await panel.getByLabel("catalog.brands").check();
+  await panel.getByRole("button", { name: "Start export" }).click();
+
+  // The query's own retries run first, then the failure is shown and polling stops.
+  await expect(panel.getByText("Couldn't refresh the status")).toBeVisible({ timeout: 10_000 });
+  await expect(panel.getByText("Working…")).toHaveCount(0);
+  const settled = polls;
+  await page.waitForTimeout(2_500);
+  expect(polls).toBe(settled);
+
+  failing = false;
+  await panel.getByRole("button", { name: "Retry" }).click();
+  await expect(panel.getByText("Succeeded")).toBeVisible();
+  await expect(panel.getByText("Couldn't refresh the status")).toHaveCount(0);
+});
+
+test("refuses an archive over the upload limit without sending it", async ({ page }) => {
+  let uploads = 0;
+  await page.route("**/api/v1/transfer/imports", (route) => {
+    uploads++;
+    return route.fulfill({ status: 500 });
+  });
+
+  await page.goto("/system/transfer");
+  await expect(page.getByText(/Up to 200\.0 MB/)).toBeVisible();
+  // Playwright caps setInputFiles buffers at 50 MB, so fake the size on a tiny File.
+  await page.getByLabel("Archive to import").evaluate((input: HTMLInputElement) => {
+    const file = new File(["PK"], "huge.zip", { type: "application/zip" });
+    Object.defineProperty(file, "size", { value: 300 * 1024 * 1024 });
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await expect(page.getByText("huge.zip is 300.0 MB; the limit is 200.0 MB.")).toBeVisible();
+  expect(uploads).toBe(0);
+});
