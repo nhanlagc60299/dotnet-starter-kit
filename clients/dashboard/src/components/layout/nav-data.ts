@@ -4,6 +4,7 @@ import {
   FolderOpen,
   FolderTree,
   HeartPulse,
+  KeyRound,
   LayoutDashboard,
   MessageCircle,
   Package,
@@ -116,6 +117,7 @@ export const sections: NavSection[] = [
       { to: "/identity/users", label: "Users", icon: Users, perm: "Permissions.Users.Update" },
       { to: "/identity/roles", label: "Roles", icon: ShieldCheck, perm: "Permissions.Roles.Update" },
       { to: "/identity/groups", label: "Groups", icon: UsersRound, perm: "Permissions.Groups.Update" },
+      { to: "/identity/access", label: "Access rules", icon: KeyRound, perm: "Permissions.AccessControl.View", module: "AccessControl" },
     ],
   },
   {

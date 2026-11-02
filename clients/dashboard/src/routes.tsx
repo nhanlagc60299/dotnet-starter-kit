@@ -114,6 +114,10 @@ const GroupDetailPage = lazyNamed(
 );
 const MyFilesPage = lazyNamed(() => import("@/pages/files/my-files"), "MyFilesPage");
 const ChatPage = lazyNamed(() => import("@/pages/chat/chat-page"), "ChatPage");
+const AccessRulesPage = lazyNamed(
+  () => import("@/pages/identity/access-rules"),
+  "AccessRulesPage",
+);
 const SearchPage = lazyNamed(() => import("@/pages/search"), "SearchPage");
 
 /**
@@ -222,6 +226,7 @@ export const router = createBrowserRouter([
           { path: "identity/roles/:roleId", element: withSuspense(<RoleDetailPage />) },
           { path: "identity/groups", element: withSuspense(<GroupsPage />) },
           { path: "identity/groups/:groupId", element: withSuspense(<GroupDetailPage />) },
+          { path: "identity/access", element: withSuspense(<AccessRulesPage />) },
           { path: "catalog", element: <Navigate to="/catalog/brands" replace /> },
           { path: "catalog/brands", element: withSuspense(<BrandsPage />) },
           { path: "catalog/categories", element: withSuspense(<CategoriesPage />) },
