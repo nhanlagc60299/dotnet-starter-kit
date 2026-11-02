@@ -108,13 +108,24 @@ containers, and no host path or host socket is mounted anywhere.
 4. Never use `pull_request_target` with a checkout of the PR head on this runner.
 
 **What remains.**
-- The runner container is `--privileged` (needed for the nested engine). It is still a rootless
-  container of the VM user, with no host paths, but a kernel or container-runtime escape from it
-  lands as that VM user — who owns the VM's podman and the `/Users` mount. Keep the VM patched
-  (`podman machine` updates) and don't run other sensitive work in the same VM if that matters.
+- **Privilege.** Jobs are effectively root inside the runner container: `runner` is in the `sudo`
+  group (passwordless, from the base image). The container is `--privileged` (needed for the
+  nested engine): seccomp is off and `/dev/kvm` and `/dev/vsock` are open. Its root maps to the VM
+  user `core` (uid 501), and `core` has passwordless sudo in the VM. So a kernel or
+  container-runtime escape lands as VM root, and from there reaches the VM's podman, its other
+  containers and the Mac's `/Users` mount. Keep the VM patched (`podman machine` updates); a
+  dedicated VM for CI is the real fix.
+- **Network reach.** The runner sits on the VM's podman bridge (10.88.0.x, gateway 10.88.0.1).
+  Jobs can reach every port the VM publishes (today the aicms stack on 8000, 5080, 3000 and 3001),
+  and services on the Mac's localhost through `host.containers.internal` (192.168.127.254). That
+  is no worse than the first version's `--network host`, but it is real: don't run sensitive
+  local services (databases with real data, admin consoles, dev servers holding credentials) while
+  CI runs, or give CI its own VM.
 - The runner is **persistent**: a bad job can leave files in the home volume or images in the
   nested engine that later jobs — including `main`/tag jobs with `NUGET_API_KEY` and a
   `packages: write` token — then pick up. `actions/checkout` cleans the workspace, but not
-  `~/.nuget`, `~/.npm` or the engine. Future hardening: register with `--ephemeral` and have
-  `register.sh` recreate both volumes after every job (one job per runner lifetime), and keep the
-  publish jobs on a separate runner or on GitHub-hosted VMs.
+  `~/.nuget`, `~/.npm` or the engine. A job can also read `/home/runner/.credentials` (and the
+  RSA key next to it) and impersonate this runner to GitHub — taking later jobs, secrets
+  included, until the runner is removed. Future hardening: register with `--ephemeral` and have
+  `register.sh` recreate both volumes after every job (one job per runner lifetime, credentials
+  good for one job), and keep the publish jobs on a separate runner or on GitHub-hosted VMs.
