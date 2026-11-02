@@ -1,0 +1,82 @@
+import { apiFetch } from "@/lib/api-client";
+
+export type PagedResponse<T> = {
+  items: T[];
+  pageNumber: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+};
+
+/**
+ * One hit from GET /api/v1/search. `snippet` wraps matches in `<mark>`…`</mark>`
+ * but the rest is the indexed text as-is (NOT HTML-escaped): render it by
+ * splitting on the markers (see `splitMarks`), never as HTML.
+ */
+export type SearchHitDto = {
+  entityType: string;
+  entityId: string;
+  title: string;
+  snippet: string | null;
+  url: string | null;
+  rank: number;
+};
+
+export const SEARCH_VIEW_PERMISSION = "Permissions.Search.View";
+
+export function searchDocuments(p: {
+  q: string;
+  entityType?: string;
+  pageNumber: number;
+  pageSize: number;
+}) {
+  const q = new URLSearchParams();
+  q.set("q", p.q);
+  if (p.entityType) q.set("entityType", p.entityType);
+  q.set("pageNumber", String(p.pageNumber));
+  q.set("pageSize", String(p.pageSize));
+  return apiFetch<PagedResponse<SearchHitDto>>(`/api/v1/search?${q}`);
+}
+
+/** Split a server snippet into plain-text runs, flagging the ones inside `<mark>`. */
+export function splitMarks(snippet: string): { text: string; mark: boolean }[] {
+  const parts: { text: string; mark: boolean }[] = [];
+  let mark = false;
+  for (const piece of snippet.split(/(<mark>|<\/mark>)/)) {
+    if (piece === "<mark>") mark = true;
+    else if (piece === "</mark>") mark = false;
+    else if (piece) parts.push({ text: piece, mark });
+  }
+  return parts;
+}
+
+/**
+ * Where a hit may link to. An app-relative path (`/…`) must resolve to this
+ * origin: browsers strip tab/newline and read `\` as `/`, so "/\t/evil.com",
+ * "/\n/evil.com", "//evil.com" and "/\\evil.com" all point at another host and
+ * get no link, as does a path that normalises to "//…" ("/..//evil.com"). An absolute http(s) URL opens externally. Anything else
+ * (javascript:, data:, bare words) gets no link.
+ */
+export function safeHitHref(
+  url: string | null,
+  origin: string = window.location.origin,
+): { href: string; external: boolean } | null {
+  if (!url) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url, origin);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  if (url.startsWith("/")) {
+    if (parsed.origin !== origin) return null;
+    const href = parsed.pathname + parsed.search + parsed.hash;
+    // Dot segments can normalise to a path that starts with "//" ("/..//evil.com"),
+    // which a router would treat as protocol-relative: allow exactly one leading slash.
+    return /^\/(?![/\\])/.test(href) ? { href, external: false } : null;
+  }
+  return /^https?:\/\//i.test(url) ? { href: parsed.href, external: true } : null;
+}

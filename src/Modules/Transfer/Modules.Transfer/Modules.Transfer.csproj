@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<RootNamespace>FSH.Modules.Transfer</RootNamespace>
+		<AssemblyName>FSH.Modules.Transfer</AssemblyName>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\..\BuildingBlocks\Persistence\Persistence.csproj" />
+		<ProjectReference Include="..\..\..\BuildingBlocks\Web\Web.csproj" />
+		<ProjectReference Include="..\..\..\BuildingBlocks\Jobs\Jobs.csproj" />
+		<ProjectReference Include="..\..\..\BuildingBlocks\Storage\Storage.csproj" />
+		<ProjectReference Include="..\Modules.Transfer.Contracts\Modules.Transfer.Contracts.csproj" />
+		<ProjectReference Include="..\..\Identity\Modules.Identity.Contracts\Modules.Identity.Contracts.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="Transfer.Tests" />
+	</ItemGroup>
+
+</Project>

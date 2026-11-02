@@ -177,6 +177,12 @@
   --duration-fast:     120ms;
   --duration-default:  200ms;
   --duration-slow:     320ms;
+  /* Critically damped spring (damping 1.0, response 0.3s) sampled into
+     linear(): no overshoot, settles in ~450ms. Use it on CSS transitions,
+     which retarget from the current value, so the motion stays
+     interruptible. The reduced-motion rules below still zero the duration. */
+  --ease-spring: linear(0, 0.131, 0.358, 0.562, 0.715, 0.821, 0.89, 0.934, 0.96, 0.977, 0.986, 0.992, 0.995, 0.997, 0.999, 1);
+  --duration-spring:   450ms;
 
   /* Neutral shadows — cast in pure black so they read as a cool
      shadow on any chassis (no warm tint bleeding into the canvas). */

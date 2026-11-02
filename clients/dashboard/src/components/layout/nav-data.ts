@@ -1,14 +1,17 @@
 import {
   Activity,
+  ArrowDownUp,
   CreditCard,
   FolderOpen,
   FolderTree,
   HeartPulse,
+  KeyRound,
   LayoutDashboard,
   MessageCircle,
   Package,
   Receipt,
   ScrollText,
+  Search,
   Settings,
   ShieldCheck,
   Tags,
@@ -39,6 +42,12 @@ export type NavSpec = {
    * the user can reach any one of them. Combined with `perm` via AND.
    */
   anyPerm?: readonly string[];
+  /**
+   * Optional backend module behind the page (Modules:{Name}:Enabled). The item
+   * hides when the deployment switched that module off. Combined with the
+   * permission gates via AND.
+   */
+  module?: string;
 };
 
 export type NavSection = {
@@ -59,6 +68,7 @@ export const topNavTop: NavSpec[] = [
   // as trash-permissions.ts: if the endpoint's permission changes, mirror it.
   { to: "/chat", label: "Chat", icon: MessageCircle, perm: "Permissions.Chat.Channels.View" },
   { to: "/files", label: "My Files", icon: FolderOpen, perm: "Permissions.Files.Upload" },
+  { to: "/search", label: "Search", icon: Search, perm: "Permissions.Search.View", module: "Search" },
 ];
 
 export const topNavBottom: NavSpec[] = [
@@ -108,6 +118,7 @@ export const sections: NavSection[] = [
       { to: "/identity/users", label: "Users", icon: Users, perm: "Permissions.Users.Update" },
       { to: "/identity/roles", label: "Roles", icon: ShieldCheck, perm: "Permissions.Roles.Update" },
       { to: "/identity/groups", label: "Groups", icon: UsersRound, perm: "Permissions.Groups.Update" },
+      { to: "/identity/access", label: "Access rules", icon: KeyRound, perm: "Permissions.AccessControl.View", module: "AccessControl" },
     ],
   },
   {
@@ -123,28 +134,55 @@ export const sections: NavSection[] = [
       // view-trash permission. Show the entry if the user can reach any tab; the
       // page hides the individual tabs they can't (see trash-permissions.ts).
       { to: "/system/trash", label: "Trash", icon: Trash2, anyPerm: ALL_TRASH_PERMISSIONS },
+      // Import and export each have their own permission; the page shows the halves the user holds.
+      {
+        to: "/system/transfer",
+        label: "Import / export",
+        icon: ArrowDownUp,
+        anyPerm: ["Permissions.Transfer.Export", "Permissions.Transfer.Import"],
+        module: "Transfer",
+      },
     ],
   },
 ];
 
+type ModuleCheck = (name: string) => boolean;
+const allModulesOn: ModuleCheck = () => true;
+
 /** True when the user satisfies the item's gates: the single `perm` (if any)
- *  AND at least one of `anyPerm` (if any). Ungated items are always visible. */
-function isNavItemVisible(item: NavSpec, permissions: readonly string[]): boolean {
+ *  AND at least one of `anyPerm` (if any) AND its `module` is switched on.
+ *  Ungated items are always visible. */
+function isNavItemVisible(
+  item: NavSpec,
+  permissions: readonly string[],
+  isModuleEnabled: ModuleCheck,
+): boolean {
+  if (item.module && !isModuleEnabled(item.module)) return false;
   if (item.perm && !permissions.includes(item.perm)) return false;
   if (item.anyPerm && !item.anyPerm.some((p) => permissions.includes(p))) return false;
   return true;
 }
 
 /** Drop items the user can't access, then drop any section left empty. */
-export function visibleSections(permissions: readonly string[]): NavSection[] {
+export function visibleSections(
+  permissions: readonly string[],
+  isModuleEnabled: ModuleCheck = allModulesOn,
+): NavSection[] {
   return sections
-    .map((s) => ({ ...s, items: s.items.filter((i) => isNavItemVisible(i, permissions)) }))
+    .map((s) => ({
+      ...s,
+      items: s.items.filter((i) => isNavItemVisible(i, permissions, isModuleEnabled)),
+    }))
     .filter((s) => s.items.length > 0);
 }
 
-/** Filter a flat nav list (top/bottom) by permission. */
-export function visibleItems(items: NavSpec[], permissions: readonly string[]): NavSpec[] {
-  return items.filter((i) => isNavItemVisible(i, permissions));
+/** Filter a flat nav list (top/bottom) by permission and module switch. */
+export function visibleItems(
+  items: NavSpec[],
+  permissions: readonly string[],
+  isModuleEnabled: ModuleCheck = allModulesOn,
+): NavSpec[] {
+  return items.filter((i) => isNavItemVisible(i, permissions, isModuleEnabled));
 }
 
 /** Find the section whose items contain the given path (best prefix match). */

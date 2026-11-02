@@ -17,6 +17,9 @@
 	  <ProjectReference Include="..\..\Modules\Billing\Modules.Billing\Modules.Billing.csproj" />
 	  <ProjectReference Include="..\..\Modules\Catalog\Modules.Catalog\Modules.Catalog.csproj" />
 	  <ProjectReference Include="..\..\Modules\Tickets\Modules.Tickets\Modules.Tickets.csproj" />
+	  <ProjectReference Include="..\..\Modules\Search\Modules.Search\Modules.Search.csproj" />
+	  <ProjectReference Include="..\..\Modules\AccessControl\Modules.AccessControl\Modules.AccessControl.csproj" />
+	  <ProjectReference Include="..\..\Modules\Transfer\Modules.Transfer\Modules.Transfer.csproj" />
 	  <ProjectReference Include="..\..\Modules\Chat\Modules.Chat\Modules.Chat.csproj" />
 	  <ProjectReference Include="..\..\Modules\Notifications\Modules.Notifications\Modules.Notifications.csproj" />
 	  <ProjectReference Include="..\..\Modules\Files\Modules.Files\Modules.Files.csproj" />
@@ -28,6 +31,9 @@
 	  <Folder Include="Billing\" />
 	  <Folder Include="Catalog\" />
 	  <Folder Include="Tickets\" />
+	  <Folder Include="Search\" />
+	  <Folder Include="AccessControl\" />
+	  <Folder Include="Transfer\" />
 	  <Folder Include="Chat\" />
 	  <Folder Include="Notifications\" />
 	  <Folder Include="Files\" />

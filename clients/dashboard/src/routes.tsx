@@ -114,6 +114,12 @@ const GroupDetailPage = lazyNamed(
 );
 const MyFilesPage = lazyNamed(() => import("@/pages/files/my-files"), "MyFilesPage");
 const ChatPage = lazyNamed(() => import("@/pages/chat/chat-page"), "ChatPage");
+const AccessRulesPage = lazyNamed(
+  () => import("@/pages/identity/access-rules"),
+  "AccessRulesPage",
+);
+const TransferPage = lazyNamed(() => import("@/pages/system/transfer"), "TransferPage");
+const SearchPage = lazyNamed(() => import("@/pages/search"), "SearchPage");
 
 /**
  * RouteFallback — what shows while a lazy chunk is downloading. Mirrors
@@ -208,7 +214,9 @@ export const router = createBrowserRouter([
           { path: "system/audits", element: withSuspense(<AuditsPage />) },
           { path: "system/trash", element: withSuspense(<TrashPage />) },
           { path: "system/sessions", element: withSuspense(<SessionsPage />) },
+          { path: "system/transfer", element: withSuspense(<TransferPage />) },
           { path: "files", element: withSuspense(<MyFilesPage />) },
+          { path: "search", element: withSuspense(<SearchPage />) },
           { path: "chat", element: withSuspense(<ChatPage />) },
           { path: "chat/:channelId", element: withSuspense(<ChatPage />) },
           { path: "tickets", element: withSuspense(<TicketsPage />) },
@@ -220,6 +228,7 @@ export const router = createBrowserRouter([
           { path: "identity/roles/:roleId", element: withSuspense(<RoleDetailPage />) },
           { path: "identity/groups", element: withSuspense(<GroupsPage />) },
           { path: "identity/groups/:groupId", element: withSuspense(<GroupDetailPage />) },
+          { path: "identity/access", element: withSuspense(<AccessRulesPage />) },
           { path: "catalog", element: <Navigate to="/catalog/brands" replace /> },
           { path: "catalog/brands", element: withSuspense(<BrandsPage />) },
           { path: "catalog/categories", element: withSuspense(<CategoriesPage />) },

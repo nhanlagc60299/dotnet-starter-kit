@@ -45,6 +45,18 @@
     <Project Path="Modules/Notifications/Modules.Notifications.Contracts/Modules.Notifications.Contracts.csproj" />
     <Project Path="Modules/Notifications/Modules.Notifications/Modules.Notifications.csproj" />
   </Folder>
+  <Folder Name="/Modules/AccessControl/">
+    <Project Path="Modules/AccessControl/Modules.AccessControl.Contracts/Modules.AccessControl.Contracts.csproj" />
+    <Project Path="Modules/AccessControl/Modules.AccessControl/Modules.AccessControl.csproj" />
+  </Folder>
+  <Folder Name="/Modules/Transfer/">
+    <Project Path="Modules/Transfer/Modules.Transfer.Contracts/Modules.Transfer.Contracts.csproj" />
+    <Project Path="Modules/Transfer/Modules.Transfer/Modules.Transfer.csproj" />
+  </Folder>
+  <Folder Name="/Modules/Search/">
+    <Project Path="Modules/Search/Modules.Search.Contracts/Modules.Search.Contracts.csproj" />
+    <Project Path="Modules/Search/Modules.Search/Modules.Search.csproj" />
+  </Folder>
   <Folder Name="/Modules/Tickets/">
     <Project Path="Modules/Tickets/Modules.Tickets.Contracts/Modules.Tickets.Contracts.csproj" />
     <Project Path="Modules/Tickets/Modules.Tickets/Modules.Tickets.csproj" />
@@ -70,6 +82,9 @@
     <Project Path="Tests/Auditing.Tests/Auditing.Tests.csproj" />
     <Project Path="Tests/Billing.Tests/Billing.Tests.csproj" />
     <Project Path="Tests/Catalog.Tests/Catalog.Tests.csproj" />
+    <Project Path="Tests/Search.Tests/Search.Tests.csproj" />
+    <Project Path="Tests/AccessControl.Tests/AccessControl.Tests.csproj" />
+    <Project Path="Tests/Transfer.Tests/Transfer.Tests.csproj" />
     <Project Path="Tests/Chat.Tests/Chat.Tests.csproj" />
     <Project Path="Tests/Webhooks.Tests/Webhooks.Tests.csproj" />
     <Project Path="Tests/Files.Tests/Files.Tests.csproj" />

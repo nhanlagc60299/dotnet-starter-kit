@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/use-auth";
+import { useModules } from "@/hooks/use-modules";
 import {
   findSectionForPath,
   topNavBottom,
@@ -191,10 +192,14 @@ export function SidebarNavBody({
   // Hide nav entries the current (or impersonated) user lacks permission for,
   // so they can't navigate to a page the API will reject with 403.
   const { user } = useAuth();
+  // Module-gated items wait for the switch list so an off module's entry
+  // never flashes in and out; a failed fetch still fails open (isEnabled).
+  const modules = useModules();
+  const moduleOn = (name: string) => modules.isLoaded && modules.isEnabled(name);
   const perms = user?.permissions ?? [];
-  const navTop = visibleItems(topNavTop, perms);
-  const navSections = visibleSections(perms);
-  const navBottom = visibleItems(topNavBottom, perms);
+  const navTop = visibleItems(topNavTop, perms, moduleOn);
+  const navSections = visibleSections(perms, moduleOn);
+  const navBottom = visibleItems(topNavBottom, perms, moduleOn);
 
   return (
     /* Nav scrolls vertically when item count exceeds available height.
