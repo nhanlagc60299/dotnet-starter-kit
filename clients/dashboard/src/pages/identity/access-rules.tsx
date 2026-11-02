@@ -31,6 +31,9 @@ import { describe } from "@/lib/list-helpers";
 const SUBJECT_RE = /^[a-z][a-z0-9-]*(:[a-z0-9*-]+)?$/;
 const ACTION_RE = /^[a-z][a-zA-Z]*$/;
 const MAX_CONDITION_LENGTH = 8_000;
+// RoleConstants.Admin: the access filter gives this role every row (x => true)
+// and skips its grants, so editing them would be a no-op.
+const ADMIN_ROLE = "Admin";
 const CONDITION_EXAMPLE = '{ "createdBy": { "$eq": "$CURRENT_USER" } }';
 
 /** Editable copy of a grant. `id` only keys React rows and maps server errors back. */
@@ -149,7 +152,7 @@ export function AccessRulesPage() {
       <EntityPageHeader
         icon={KeyRound}
         title="Access rules"
-        description="What each role may do on a subject, optionally limited to the rows a condition matches."
+        description="What each role may do on a subject, optionally limited to the rows a condition matches. No module enforces these rules yet, so saving them changes nothing until one does."
       />
       <FeatureGateView
         gate={gate}
@@ -169,7 +172,8 @@ function AccessRulesBody({ canManage }: { canManage: boolean }) {
     [rolesQuery.data],
   );
   const [picked, setPicked] = useState<string | null>(null);
-  const role = picked ?? roles[0]?.name ?? null;
+  // Default to a role whose rules actually apply.
+  const role = picked ?? (roles.find((r) => r.name !== ADMIN_ROLE) ?? roles[0])?.name ?? null;
 
   if (rolesQuery.isError) return <ErrorBand message={describe(rolesQuery.error)} />;
   if (rolesQuery.isLoading) return <EntityListLoading rows={4} desktopColumns="grid-cols-[1fr_120px]" />;
@@ -203,7 +207,20 @@ function AccessRulesBody({ canManage }: { canManage: boolean }) {
           );
         })}
       </nav>
-      <GrantsEditor role={role} canManage={canManage} />
+      {role === ADMIN_ROLE ? (
+        <section
+          aria-label={`Grants of ${role}`}
+          className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] shadow-xs"
+        >
+          <EntityEmpty
+            icon={ShieldCheck}
+            title="Admins can do everything"
+            body="Access rules don't restrict the Admin role: it always reaches every row, so there is nothing to set here."
+          />
+        </section>
+      ) : (
+        <GrantsEditor role={role} canManage={canManage} />
+      )}
     </div>
   );
 }

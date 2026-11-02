@@ -6,9 +6,10 @@ import { installShellMocks } from "../helpers/shell-mocks";
 const ROLES = [
   { id: "r-2", name: "Editor", description: null },
   { id: "r-1", name: "Admin", description: null },
+  { id: "r-3", name: "Teacher", description: null },
 ];
 
-const ADMIN_GRANTS = [
+const EDITOR_GRANTS = [
   { subject: "tickets", action: "read", condition: { createdBy: { $eq: "$CURRENT_USER" } } },
 ];
 
@@ -22,7 +23,7 @@ async function mockGrants(page: Page, putReply: (route: Route) => Promise<void>)
       await putReply(route);
       return;
     }
-    await route.fulfill({ json: role === "Admin" ? ADMIN_GRANTS : [] });
+    await route.fulfill({ json: role === "Editor" ? EDITOR_GRANTS : [] });
   });
   return puts;
 }
@@ -42,7 +43,8 @@ test("edits a role's grants and saves the whole set", async ({ page }) => {
 
   await page.goto("/identity/access");
   await expect(page.getByRole("link", { name: "Access rules" })).toBeVisible();
-  const editor = page.getByRole("region", { name: "Grants of Admin" });
+  // Opens on the first non-Admin role: Admin rules would be no-ops.
+  const editor = page.getByRole("region", { name: "Grants of Editor" });
   await expect(editor.getByLabel("Subject of grant 1")).toHaveValue("tickets");
   await expect(editor.getByLabel("Condition (JSON)")).toHaveValue(/\$CURRENT_USER/);
 
@@ -61,18 +63,23 @@ test("edits a role's grants and saves the whole set", async ({ page }) => {
 
   await condition.fill('{"isActive": true}');
   await editor.getByRole("button", { name: "Save rules" }).click();
-  await expect(page.getByText("Saved access rules for Admin")).toBeVisible();
+  await expect(page.getByText("Saved access rules for Editor")).toBeVisible();
 
   expect(puts).toEqual([
     {
-      role: "Admin",
+      role: "Editor",
       body: [
-        ...ADMIN_GRANTS,
+        ...EDITOR_GRANTS,
         { subject: "catalog:brands", action: "update", condition: { isActive: true } },
       ],
     },
   ]);
   await expect(editor.getByText("Unsaved")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Admin", exact: true }).click();
+  const admin = page.getByRole("region", { name: "Grants of Admin" });
+  await expect(admin.getByText("Admins can do everything")).toBeVisible();
+  await expect(admin.getByRole("button", { name: "Save rules" })).toHaveCount(0);
 });
 
 test("shows the API's validation errors on the grant they belong to", async ({ page }) => {
@@ -89,8 +96,8 @@ test("shows the API's validation errors on the grant they belong to", async ({ p
   );
 
   await page.goto("/identity/access");
-  await page.getByRole("button", { name: "Editor" }).click();
-  const editor = page.getByRole("region", { name: "Grants of Editor" });
+  await page.getByRole("button", { name: "Teacher" }).click();
+  const editor = page.getByRole("region", { name: "Grants of Teacher" });
   await editor.getByRole("button", { name: "Add grant" }).click();
   await editor.getByLabel("Subject of grant 1").fill("tickets");
   await editor.getByLabel("Action of grant 1").fill("read");
