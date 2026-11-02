@@ -141,5 +141,5 @@ records for DTOs/events/value objects · `default!` for required non-nullable st
 ## AI tooling resources
 
 - **Rules** — `.agents/rules/*.md` (indexed above). Read on demand.
-- **Skills** — `.agents/skills/*/SKILL.md`: step-by-step task recipes. Scaffolders: `add-feature`, `add-entity`, `add-module`, `add-react-page`, `add-full-slice`. Ops: `create-migration`, `add-integration-event`, `add-permission`. Reference: `query-patterns`, `testing-guide`, `mediator-reference`.
+- **Skills** — `.agents/skills/*/SKILL.md`: step-by-step task recipes. Scaffolders: `add-feature`, `add-entity`, `add-module`, `add-react-page`, `add-full-slice`. Ops: `create-migration`, `add-integration-event`, `add-permission`. Reference: `query-patterns`, `testing-guide`, `mediator-reference`. Design: `apple-design` (fluid motion, materials, typography for the React apps; vendored from `emilkowalski/skills`).
 - **Workflows** — `.agents/workflows/*.md`: task playbooks (`code-reviewer`, `feature-scaffolder`, `module-creator`, `architecture-guard`, `migration-helper`).
