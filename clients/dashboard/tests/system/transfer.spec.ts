@@ -86,6 +86,10 @@ test("exports, follows the job and downloads the archive", async ({ page }) => {
   const download = page.waitForEvent("download");
   await panel.getByRole("button", { name: "Download archive" }).click();
   expect((await download).suggestedFilename()).toBe("transfer-export-20261102-100000.zip");
+
+  // The job id survives a refresh (sessionStorage), so the result is still there.
+  await page.reload();
+  await expect(page.getByRole("region", { name: "Export" }).getByText("Succeeded")).toBeVisible();
 });
 
 test("uploads, previews with the chosen mode and applies an import", async ({ page }) => {

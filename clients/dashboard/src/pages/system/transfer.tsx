@@ -100,6 +100,32 @@ function TransferBody({ canExport, canImport }: { canExport: boolean; canImport:
   );
 }
 
+/**
+ * The last job id of a kind, kept in sessionStorage so a refresh resumes it
+ * (jobs are not listed anywhere else in the UI, and re-exporting costs quota).
+ * Storage can be unavailable (privacy mode, quota): then it is page state only.
+ */
+function useRememberedJobId(kind: "export" | "import") {
+  const key = `fsh.dashboard.transfer.${kind}JobId`;
+  const [id, setId] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  });
+  const remember = (next: string | null) => {
+    setId(next);
+    try {
+      if (next) sessionStorage.setItem(key, next);
+      else sessionStorage.removeItem(key);
+    } catch {
+      /* storage unavailable */
+    }
+  };
+  return [id, remember] as const;
+}
+
 /** A job, polled while the server is still working on it. */
 function useTransferJob(id: string | null, busy: (status: TransferJobStatus) => boolean) {
   return useQuery({
@@ -119,7 +145,7 @@ function useTransferJob(id: string | null, busy: (status: TransferJobStatus) => 
 function ExportPanel({ types }: { types: TransferEntityTypeDto[] }) {
   const qc = useQueryClient();
   const [selected, setSelected] = useState<string[]>([]);
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobId, setJobId] = useRememberedJobId("export");
   // An export is queued (Pending) then Running; both mean "keep polling".
   const job = useTransferJob(jobId, (s) => s === "Pending" || s === "Running");
 
@@ -220,7 +246,7 @@ type PreviewState = { jobId: string; mode: TransferMode; summary: TransferSummar
 
 function ImportPanel({ types }: { types: TransferEntityTypeDto[] }) {
   const qc = useQueryClient();
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobId, setJobId] = useRememberedJobId("import");
   const [mode, setMode] = useState<TransferMode>("CreateOnly");
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [tooBig, setTooBig] = useState<string | null>(null);
