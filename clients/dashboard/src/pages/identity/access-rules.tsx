@@ -362,7 +362,8 @@ function GrantRow({
 
   return (
     <li className="px-5 py-4" aria-label={`Grant ${n}`}>
-      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto_auto] sm:items-start">
+      {/* Fixed toggle/remove columns so subject and action line up across rows. */}
+      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_8.5rem_2.25rem] sm:items-start">
         <FieldBox label="Subject" error={show("subject")}>
           <Input
             aria-label={`Subject of grant ${n}`}
@@ -433,7 +434,7 @@ function GrantRow({
               value={row.conditionText}
               onChange={(e) => onChange({ conditionText: e.target.value })}
               placeholder={CONDITION_EXAMPLE}
-              rows={4}
+              rows={Math.min(12, Math.max(3, row.conditionText.split("\n").length))}
               spellCheck={false}
               disabled={readOnly}
               aria-invalid={!!errors?.condition}
