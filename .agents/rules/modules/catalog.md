@@ -10,5 +10,6 @@ Product catalog — products, categories (tree), brands — with soft-delete/res
 - **Soft-delete + restore + trashed-listing** is the standard pattern. Unique indexes are **filtered on `"IsDeleted" = FALSE`** so SKU/Slug stay unique-per-tenant among *live* rows only (a deleted SKU can be reused). Replicate this on any soft-deletable unique field.
 - **EF value-generation for nav children** — `ProductImageConfiguration` sets `Id.ValueGeneratedNever()` (same nav-child footgun as Chat — see `database.md`).
 - **Single-thumbnail invariant** is enforced by the **aggregate**, not a partial unique index (Postgres non-deferrable partial unique indexes can't handle the demote/promote ordering in one transaction). Enforce such invariants in the domain.
+- Registers the `catalog.brands` Transfer source/sink (`Transfer/BrandTransfer.cs`, via `Modules.Transfer.Contracts`); see `transfer.md`.
 - Registers `ProductFileAccessPolicy` (OwnerType `"Product"`) for product images via the Files module.
 - Route ordering: literal segments (`/trash`, `/tree`, `/restore`) are registered **before** `/{id:guid}` catch-alls.

@@ -50,6 +50,8 @@
     <ProjectReference Include="..\..\Modules\Search\Modules.Search.Contracts\Modules.Search.Contracts.csproj" />
     <ProjectReference Include="..\..\Modules\AccessControl\Modules.AccessControl\Modules.AccessControl.csproj" />
     <ProjectReference Include="..\..\Modules\AccessControl\Modules.AccessControl.Contracts\Modules.AccessControl.Contracts.csproj" />
+    <ProjectReference Include="..\..\Modules\Transfer\Modules.Transfer\Modules.Transfer.csproj" />
+    <ProjectReference Include="..\..\Modules\Transfer\Modules.Transfer.Contracts\Modules.Transfer.Contracts.csproj" />
     <ProjectReference Include="..\..\Modules\Files\Modules.Files\Modules.Files.csproj" />
     <ProjectReference Include="..\..\Modules\Files\Modules.Files.Contracts\Modules.Files.Contracts.csproj" />
     <ProjectReference Include="..\..\Modules\Chat\Modules.Chat\Modules.Chat.csproj" />

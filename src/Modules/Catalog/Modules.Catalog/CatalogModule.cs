@@ -7,6 +7,8 @@ using FSH.Modules.Catalog.Authorization;
 using FSH.Modules.Catalog.Contracts.Authorization;
 using FSH.Modules.Catalog.Data;
 using FSH.Modules.Files.Contracts;
+using FSH.Modules.Catalog.Transfer;
+using FSH.Modules.Transfer.Contracts;
 using FSH.Modules.Catalog.Features.v1.Brands.CreateBrand;
 using FSH.Modules.Catalog.Features.v1.Brands.DeleteBrand;
 using FSH.Modules.Catalog.Features.v1.Brands.GetBrandById;
@@ -59,6 +61,10 @@ public sealed class CatalogModule : IModule
 
         // OwnerType=Product policy for Files module attachments (product images).
         builder.Services.AddScoped<IFileAccessPolicy, ProductFileAccessPolicy>();
+
+        // Brands export/import through the Transfer module. Inert when Transfer is switched off: only it resolves these.
+        builder.Services.AddScoped<ITransferSource, BrandTransferSource>();
+        builder.Services.AddScoped<ITransferSink, BrandTransferSink>();
 
         // Keeps persisted product-image URLs pointing at their FileAsset when Files moves its object.
         builder.Services.AddIntegrationEventHandlers(typeof(CatalogModule).Assembly);

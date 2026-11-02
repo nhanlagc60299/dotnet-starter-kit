@@ -50,6 +50,8 @@
     <ProjectReference Include="..\..\Modules\Search\Modules.Search.Contracts\Modules.Search.Contracts.csproj" />
     <ProjectReference Include="..\..\Modules\AccessControl\Modules.AccessControl\Modules.AccessControl.csproj" />
     <ProjectReference Include="..\..\Modules\AccessControl\Modules.AccessControl.Contracts\Modules.AccessControl.Contracts.csproj" />
+    <ProjectReference Include="..\..\Modules\Transfer\Modules.Transfer\Modules.Transfer.csproj" />
+    <ProjectReference Include="..\..\Modules\Transfer\Modules.Transfer.Contracts\Modules.Transfer.Contracts.csproj" />
     <ProjectReference Include="..\..\Modules\Webhooks\Modules.Webhooks\Modules.Webhooks.csproj" />
     <ProjectReference Include="..\FSH.Starter.Migrations.PostgreSQL\FSH.Starter.Migrations.PostgreSQL.csproj" />
   </ItemGroup>

@@ -123,7 +123,7 @@ public sealed class FshWebApplicationFactory : WebApplicationFactory<Program>, I
 
         builder.UseEnvironment("Development");
 
-        // The host switches Billing/Catalog/Tickets/Chat/Search/AccessControl off by default (Modules:{Name}:Enabled);
+        // The host switches Billing/Catalog/Tickets/Chat/Search/AccessControl/Transfer off by default (Modules:{Name}:Enabled);
         // the integration suite exercises every module, so turn them all on. AddModules reads the
         // switches eagerly while the builder is assembled, before the ConfigureAppConfiguration
         // overlay below applies, so they must go in as host settings (like the environment above).
@@ -133,6 +133,7 @@ public sealed class FshWebApplicationFactory : WebApplicationFactory<Program>, I
         builder.UseSetting("Modules:Chat:Enabled", "true");
         builder.UseSetting("Modules:Search:Enabled", "true");
         builder.UseSetting("Modules:AccessControl:Enabled", "true");
+        builder.UseSetting("Modules:Transfer:Enabled", "true");
 
         builder.ConfigureAppConfiguration((_, config) =>
         {
