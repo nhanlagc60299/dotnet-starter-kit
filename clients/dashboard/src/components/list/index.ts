@@ -31,3 +31,4 @@ export {
   EntityDetailSection,
   type EntityDetailStatTone,
 } from "./entity-detail";
+export { FeatureGateView } from "./feature-gate-view";

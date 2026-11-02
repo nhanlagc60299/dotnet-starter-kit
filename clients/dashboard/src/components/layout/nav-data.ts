@@ -9,6 +9,7 @@ import {
   Package,
   Receipt,
   ScrollText,
+  Search,
   Settings,
   ShieldCheck,
   Tags,
@@ -39,6 +40,12 @@ export type NavSpec = {
    * the user can reach any one of them. Combined with `perm` via AND.
    */
   anyPerm?: readonly string[];
+  /**
+   * Optional backend module behind the page (Modules:{Name}:Enabled). The item
+   * hides when the deployment switched that module off. Combined with the
+   * permission gates via AND.
+   */
+  module?: string;
 };
 
 export type NavSection = {
@@ -59,6 +66,7 @@ export const topNavTop: NavSpec[] = [
   // as trash-permissions.ts: if the endpoint's permission changes, mirror it.
   { to: "/chat", label: "Chat", icon: MessageCircle, perm: "Permissions.Chat.Channels.View" },
   { to: "/files", label: "My Files", icon: FolderOpen, perm: "Permissions.Files.Upload" },
+  { to: "/search", label: "Search", icon: Search, perm: "Permissions.Search.View", module: "Search" },
 ];
 
 export const topNavBottom: NavSpec[] = [
@@ -127,24 +135,43 @@ export const sections: NavSection[] = [
   },
 ];
 
+type ModuleCheck = (name: string) => boolean;
+const allModulesOn: ModuleCheck = () => true;
+
 /** True when the user satisfies the item's gates: the single `perm` (if any)
- *  AND at least one of `anyPerm` (if any). Ungated items are always visible. */
-function isNavItemVisible(item: NavSpec, permissions: readonly string[]): boolean {
+ *  AND at least one of `anyPerm` (if any) AND its `module` is switched on.
+ *  Ungated items are always visible. */
+function isNavItemVisible(
+  item: NavSpec,
+  permissions: readonly string[],
+  isModuleEnabled: ModuleCheck,
+): boolean {
+  if (item.module && !isModuleEnabled(item.module)) return false;
   if (item.perm && !permissions.includes(item.perm)) return false;
   if (item.anyPerm && !item.anyPerm.some((p) => permissions.includes(p))) return false;
   return true;
 }
 
 /** Drop items the user can't access, then drop any section left empty. */
-export function visibleSections(permissions: readonly string[]): NavSection[] {
+export function visibleSections(
+  permissions: readonly string[],
+  isModuleEnabled: ModuleCheck = allModulesOn,
+): NavSection[] {
   return sections
-    .map((s) => ({ ...s, items: s.items.filter((i) => isNavItemVisible(i, permissions)) }))
+    .map((s) => ({
+      ...s,
+      items: s.items.filter((i) => isNavItemVisible(i, permissions, isModuleEnabled)),
+    }))
     .filter((s) => s.items.length > 0);
 }
 
-/** Filter a flat nav list (top/bottom) by permission. */
-export function visibleItems(items: NavSpec[], permissions: readonly string[]): NavSpec[] {
-  return items.filter((i) => isNavItemVisible(i, permissions));
+/** Filter a flat nav list (top/bottom) by permission and module switch. */
+export function visibleItems(
+  items: NavSpec[],
+  permissions: readonly string[],
+  isModuleEnabled: ModuleCheck = allModulesOn,
+): NavSpec[] {
+  return items.filter((i) => isNavItemVisible(i, permissions, isModuleEnabled));
 }
 
 /** Find the section whose items contain the given path (best prefix match). */

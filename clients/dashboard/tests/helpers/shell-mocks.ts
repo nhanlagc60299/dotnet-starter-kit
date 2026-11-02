@@ -29,6 +29,9 @@ const ALL_MODULES_ON = [
   "Catalog",
   "Tickets",
   "Chat",
+  "Search",
+  "AccessControl",
+  "Transfer",
 ].map((name) => ({ name, enabled: true, required: name === "Identity" || name === "Multitenancy" }));
 
 /**
