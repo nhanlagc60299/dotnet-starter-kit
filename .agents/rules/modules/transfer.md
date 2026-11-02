@@ -37,6 +37,8 @@ Registering costs nothing when Transfer is off (only Transfer resolves these), a
 - **Any `Transfer.Export` holder in a tenant can see and download every export job of that tenant** (plus the source permissions of its types); jobs are not private to their creator.
 - The client's upload file name is display-only: last path segment, `[A-Za-z0-9._-]`, ≤ 100 chars. Download names are generated (`transfer-export-{yyyyMMdd-HHmmss}.zip`).
 - `GET /exports/{id}/download` re-checks each source permission, because the archive holds rows of every exported type.
+- `GET /jobs/{id}` needs only `Transfer.Export` (export jobs) or `Transfer.Import` (import jobs), not each source's/sink's permission: an import job's summary (row counts, first 100 row errors) is visible to any `Transfer.Import` holder who has its id.
+- **Finding jobs (runbook).** There is no list endpoint; the dashboard only remembers the last export/import id per browser tab (sessionStorage). An operator finds a tenant's jobs in `transfer.transfer_jobs` (filter on `"TenantId"`, order by `"CreatedAtUtc"`), e.g. to hand a user the id of a finished export instead of letting them export again: exports count against quota and are never refunded.
 
 ## Catalog brands (`catalog.brands`)
 

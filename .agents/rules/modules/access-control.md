@@ -25,6 +25,9 @@ Grants add up: the conditions of every grant the caller's roles hold are OR-ed; 
 
 ## Gotchas
 
+- **Inert until a module uses it.** No module calls `IAccessFilter` yet, so enabling AccessControl and saving grants restricts nothing today. The dashboard says so on the Access rules page.
+- **Role changes lag by the token lifetime.** Roles come from the JWT (`JwtOptions:AccessTokenMinutes`, 45 by default), so a user removed from a role keeps its grants, and a demoted Admin keeps `x => true`, until their access token expires or is refreshed.
+
 - **Fail closed.** A stored condition that does not compile for `T` (unknown property, wrong value type, over limits, bad JSON) contributes `false` and logs a warning. The save-time validator checks structure, operators, operand shapes and variables, but it cannot check property names or value types, because a subject is not tied to a CLR type.
 - **Only EF-mapped properties work.** The compiler accepts any public scalar property; one that EF does not map fails at query translation.
 - **Escalation guard (`AccessRules`).** A non-admin may only add, change or remove grants for (subject, action) pairs they hold themselves **without a condition**. Grants left unchanged are not checked, so a manager can edit a role that also has grants beyond their own.

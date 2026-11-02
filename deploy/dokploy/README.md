@@ -274,6 +274,9 @@ Trong R2 còn phải đặt CORS cho bucket file cho phép origin `FSH_ADMIN_URL
 
 `FSH_MODULE_BILLING`, `FSH_MODULE_CATALOG`, `FSH_MODULE_TICKETS`, `FSH_MODULE_CHAT`, `FSH_MODULE_SEARCH`, `FSH_MODULE_ACCESSCONTROL`, `FSH_MODULE_TRANSFER` ánh xạ sang `Modules__{Name}__Enabled` và đều mặc định `false`. Chúng được định nghĩa một lần trong file compose (`x-modules`) và tới `migrator` lẫn `api` giống hệt nhau; đổi trong tab Environment rồi redeploy để migrator tạo hoặc bỏ qua schema của module.
 
+- `FSH_MODULE_ACCESSCONTROL`: chưa module nào áp dụng quy tắc truy cập — bật lên chưa có tác dụng cho tới khi có module dùng nó.
+- `FSH_MODULE_SEARCH`: chưa module nào đẩy dữ liệu vào chỉ mục tìm kiếm — bật lên chưa có tác dụng cho tới khi có module dùng nó (chỉ mục rỗng).
+
 ## Giám sát uptime của ứng dụng
 
 Chạy [Uptime Kuma](https://github.com/louislam/uptime-kuma) như **một service Dokploy riêng** (Templates → Uptime Kuma), không nằm trong compose này, để nó vẫn sống khi bạn redeploy ứng dụng. Cho nó domain riêng, rồi thêm các monitor HTTP(s):
