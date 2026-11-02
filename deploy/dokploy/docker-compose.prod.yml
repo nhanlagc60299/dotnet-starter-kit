@@ -133,6 +133,8 @@ services:
     environment:
       FSH_STORAGE_PROVIDER: ${FSH_STORAGE_PROVIDER:-local}
       FSH_S3_PUBLIC_URL: ${FSH_S3_PUBLIC_URL:-}
+      FSH_S3_SERVICE_URL: ${FSH_S3_SERVICE_URL:-http://rustfs:9000}
+      FSH_S3_PUBLIC_BASE_URL: ${FSH_S3_PUBLIC_BASE_URL:-}
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-}
     volumes:
@@ -146,6 +148,14 @@ services:
           case "$$FSH_S3_PUBLIC_URL" in
             http://*|https://*) ;;
             *) echo "FSH_STORAGE_PROVIDER=s3 requires FSH_S3_PUBLIC_URL (an http(s) URL)"; exit 1 ;;
+          esac
+          case "$$FSH_S3_SERVICE_URL" in
+            http://*|https://*) ;;
+            *) echo "FSH_S3_SERVICE_URL must be an http(s) URL"; exit 1 ;;
+          esac
+          case "$$FSH_S3_PUBLIC_BASE_URL" in
+            ""|http://*|https://*) ;;
+            *) echo "FSH_S3_PUBLIC_BASE_URL must be an http(s) URL"; exit 1 ;;
           esac
           [ -n "$$RUSTFS_ACCESS_KEY" ] && [ -n "$$RUSTFS_SECRET_KEY" ] ||
             { echo "FSH_STORAGE_PROVIDER=s3 requires RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY"; exit 1; }
@@ -210,13 +220,16 @@ services:
       - -c
       - |
         set -e
-        aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket fsh 2>/dev/null ||
-          aws --endpoint-url http://rustfs:9000 s3api create-bucket --bucket fsh
-        aws --endpoint-url http://rustfs:9000 s3api put-bucket-policy --bucket fsh --policy '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::fsh/public/*"]}]}'
+        aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket ${FSH_S3_BUCKET:-fsh} 2>/dev/null ||
+          aws --endpoint-url http://rustfs:9000 s3api create-bucket --bucket ${FSH_S3_BUCKET:-fsh}
+        aws --endpoint-url http://rustfs:9000 s3api put-bucket-policy --bucket ${FSH_S3_BUCKET:-fsh} --policy '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::${FSH_S3_BUCKET:-fsh}/public/*"]}]}'
 
   # One-shot: applies EF migrations and seeds on every deploy, before the API starts.
   migrator:
     image: ghcr.io/${GHCR_OWNER:?GHCR_OWNER is required}/fsh-db-migrator:${FSH_IMAGE_TAG:-latest}
+    # Dokploy runs `up -d --build` without --pull: without this a redeploy keeps the cached image
+    # even when a mutable tag (dev-latest, latest) has moved.
+    pull_policy: always
     restart: "no"
     depends_on:
       db-roles: { condition: service_completed_successfully }
@@ -234,6 +247,7 @@ services:
 
   api:
     image: ghcr.io/${GHCR_OWNER:?GHCR_OWNER is required}/fsh-api:${FSH_IMAGE_TAG:-latest}
+    pull_policy: always   # see migrator
     restart: unless-stopped
     depends_on:
       postgres: { condition: service_healthy }
@@ -256,13 +270,16 @@ services:
       Seed__DefaultAdminPassword: ${SEED_ADMIN_PASSWORD}
       # `local` unless the storage profile is on; the S3 keys below are ignored by the local provider.
       Storage__Provider: ${FSH_STORAGE_PROVIDER:-local}
-      Storage__S3__ServiceUrl: http://rustfs:9000
-      # Presigned URLs go to browsers, which cannot resolve rustfs:9000.
+      # What the API itself calls: the bundled RustFS by default, or an external S3/R2 endpoint.
+      Storage__S3__ServiceUrl: ${FSH_S3_SERVICE_URL:-http://rustfs:9000}
+      # Presigned URLs go to browsers, which cannot resolve rustfs:9000: the public endpoint.
       Storage__S3__PresignServiceUrl: ${FSH_S3_PUBLIC_URL:-}
-      Storage__S3__PublicBaseUrl: ${FSH_S3_PUBLIC_URL:-}/fsh
+      # Base of public file URLs. Default fits RustFS (path-style: <public url>/<bucket>); an
+      # external bucket serving files from its own domain (R2 custom domain) sets it explicitly.
+      Storage__S3__PublicBaseUrl: ${FSH_S3_PUBLIC_BASE_URL:-${FSH_S3_PUBLIC_URL:-}/${FSH_S3_BUCKET:-fsh}}
       Storage__S3__AccessKey: ${RUSTFS_ACCESS_KEY:-}
       Storage__S3__SecretKey: ${RUSTFS_SECRET_KEY:-}
-      Storage__S3__Bucket: fsh
+      Storage__S3__Bucket: ${FSH_S3_BUCKET:-fsh}
       Storage__S3__ForcePathStyle: "true"
       # No bundled mail catcher in production: point these at a real SMTP provider.
       MailOptions__Smtp__Host: ${FSH_SMTP_HOST:-}

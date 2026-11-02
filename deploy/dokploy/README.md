@@ -1,30 +1,32 @@
-# Deploy fullstackhero on Dokploy
+# Deploy fullstackhero lên Dokploy
 
-`docker-compose.prod.yml` is the production stack for a single VPS running [Dokploy](https://dokploy.com). It is derived from `deploy/docker/docker-compose.yml`, with three differences: **no service publishes a host port** (Dokploy's Traefik routes domains to containers), `api` and `migrator` come from the GHCR images CI builds, and the optional object store sits behind a compose profile.
+`docker-compose.prod.yml` là stack production cho **một VPS** chạy [Dokploy](https://dokploy.com). Nó dẫn xuất từ `deploy/docker/docker-compose.yml` với ba khác biệt: **không service nào publish port ra host** (Traefik của Dokploy route domain tới container), `api` và `migrator` lấy từ image GHCR mà CI build, và object store tuỳ chọn nằm sau một compose profile.
 
-| Service | Image | Network | What it is |
+> **Mỗi host Dokploy chỉ chạy một bản của stack này.** Tên service (`postgres`, `valkey`, `api`...) là tên chung và các service `api`/`admin`/`dashboard` cùng nằm trên mạng dùng chung `dokploy-network`; hai bản trên cùng host sẽ phân giải nhầm tên của nhau. Cần môi trường thứ hai (staging) thì dùng VPS/host Dokploy khác.
+
+| Service | Image | Mạng | Là gì |
 |---|---|---|---|
-| `db-roles`, `db-grants` | `postgres:18-alpine` | internal only | One-shot, every deploy: roles, extensions and grants, before and after the migrator (see [Database roles](#database-roles)). |
-| `init` | `alpine:3.20` | internal only | One-shot: validates the storage settings and fixes ownership of the `api_files` volume. |
-| `postgres` | `postgres:18-alpine` | internal only | Database. Never reachable from outside the project. |
-| `valkey` | `valkey/valkey:9.1.0-alpine` | internal only | HybridCache L2, Data Protection keys, idempotency store (password + AOF). |
-| `migrator` | `ghcr.io/<GHCR_OWNER>/fsh-db-migrator` | internal only | One-shot `apply --seed` on every deploy; exits 0 before `api` starts. |
-| `api` | `ghcr.io/<GHCR_OWNER>/fsh-api` | internal + `dokploy-network` | ASP.NET Core API, port **8080**. |
-| `admin` | built from `clients/admin` | internal + `dokploy-network` | Operator console (nginx), port **80**. |
-| `dashboard` | built from `clients/dashboard` | internal + `dokploy-network` | Tenant dashboard (nginx), port **80**. |
-| `backup` | built from `deploy/dokploy/db-backup` | internal only | Always on: daily `pg_dump` to an S3-compatible bucket (R2) and a monthly restore check; see [Backup và restore](#backup-và-restore). |
-| `rustfs`, `rustfs-init` | `rustfs/rustfs`, `amazon/aws-cli` | profile `storage` | Optional S3-compatible object store; see [Profiles](#profiles). |
+| `db-roles`, `db-grants` | `postgres:18-alpine` | chỉ nội bộ | One-shot, mỗi lần deploy: role, extension và grant, trước và sau migrator (xem [Database roles](#database-roles)). |
+| `init` | `alpine:3.20` | chỉ nội bộ | One-shot: kiểm tra cấu hình storage và chỉnh quyền sở hữu volume `api_files`. |
+| `postgres` | `postgres:18-alpine` | chỉ nội bộ | Database. Không bao giờ truy cập được từ bên ngoài project. |
+| `valkey` | `valkey/valkey:9.1.0-alpine` | chỉ nội bộ | HybridCache L2, khoá Data Protection, kho idempotency (có mật khẩu + AOF). |
+| `migrator` | `ghcr.io/<GHCR_OWNER>/fsh-db-migrator` | chỉ nội bộ | One-shot `apply --seed` mỗi lần deploy; thoát 0 trước khi `api` khởi động. |
+| `api` | `ghcr.io/<GHCR_OWNER>/fsh-api` | nội bộ + `dokploy-network` | ASP.NET Core API, cổng **8080**. |
+| `admin` | build từ `clients/admin` | nội bộ + `dokploy-network` | Console cho operator (nginx), cổng **80**. |
+| `dashboard` | build từ `clients/dashboard` | nội bộ + `dokploy-network` | Dashboard cho tenant (nginx), cổng **80**. |
+| `backup` | build từ `deploy/dokploy/db-backup` | chỉ nội bộ | Luôn bật: `pg_dump` hằng ngày lên bucket tương thích S3 (R2) và kiểm tra restore hằng tháng; xem [Backup và restore](#backup-và-restore). |
+| `rustfs`, `rustfs-init` | `rustfs/rustfs`, `amazon/aws-cli` | profile `storage` | Object store tương thích S3, tuỳ chọn; xem [Profiles](#profiles). |
 
-`admin` and `dashboard` have no registry image yet, so Dokploy builds them on the VPS from the repository (first deploy: several minutes).
+`admin` và `dashboard` chưa có image trên registry, nên Dokploy build chúng trên VPS từ repository (lần deploy đầu mất vài phút).
 
-## First deploy, step by step
+## Deploy lần đầu, từng bước
 
-1. **DNS.** Create `A` records pointing at the VPS for the API, admin and dashboard hosts (e.g. `api.`, `admin.`, `app.`). Add the S3 host too if you will use the `storage` profile.
-2. **GHCR access.** The GHCR packages `fsh-api` and `fsh-db-migrator` must be pullable by the VPS: make them public, or add a registry credential in Dokploy (Settings → Registry) and log the VPS in with a PAT that has `read:packages`.
-3. **Create the project.** Dokploy → Projects → Create Project → Create Service → **Compose**. Type: **Docker Compose** (not Stack; Stack does not support `build:`).
-4. **Source.** Provider: GitHub (or Git) → pick this repository and branch. **Compose Path:** `./deploy/dokploy/docker-compose.prod.yml`.
-5. **Environment.** In the Environment tab paste `deploy/dokploy/.env.example`, then fill every empty value. Dokploy saves it to a `.env` next to the compose file; the compose file picks each variable up through `${VAR}`. Generate secrets with `openssl rand -base64 48`. The URLs must be the exact origins you attach in step 6, or CORS and e-mail links break.
-6. **Domains.** Domains tab → Add Domain, once per service, with **HTTPS** on and certificate **Let's Encrypt**:
+1. **DNS.** Tạo bản ghi `A` trỏ về VPS cho các host API, admin và dashboard (ví dụ `api.`, `admin.`, `app.`). Thêm cả host S3 nếu dùng profile `storage`.
+2. **Quyền truy cập GHCR.** VPS phải pull được package GHCR `fsh-api` và `fsh-db-migrator`: để chúng public, hoặc thêm credential registry trong Dokploy (Settings → Registry) và đăng nhập VPS bằng PAT có `read:packages`.
+3. **Tạo project.** Dokploy → Projects → Create Project → Create Service → **Compose**. Type: **Docker Compose** (không phải Stack; Stack không hỗ trợ `build:`).
+4. **Source.** Provider: GitHub (hoặc Git) → chọn repository và branch này. **Compose Path:** `./deploy/dokploy/docker-compose.prod.yml`.
+5. **Environment.** Trong tab Environment dán nội dung `deploy/dokploy/.env.example` rồi điền mọi giá trị còn trống. Dokploy lưu nó thành `.env` cạnh file compose; compose lấy từng biến qua `${VAR}`. Sinh secret bằng `openssl rand -base64 48`. Các URL phải đúng từng ký tự với origin bạn gắn ở bước 6, nếu không CORS và link trong e-mail sẽ hỏng. **Lưu một bản của toàn bộ Environment ở ngoài VPS** (password manager): xem [Khôi phục sau khi mất VPS](#khôi-phục-sau-khi-mất-vps-dr).
+6. **Domains.** Tab Domains → Add Domain, mỗi service một lần, bật **HTTPS** và certificate **Let's Encrypt**:
 
    | Domain | Service name | Container port |
    |---|---|---|
@@ -32,19 +34,20 @@
    | `admin.example.com` | `admin` | `80` |
    | `app.example.com` | `dashboard` | `80` |
 
-   Use *Preview Compose* to inspect the Traefik labels Dokploy adds before deploying. `api`, `admin` and `dashboard` already join the external `dokploy-network` in the compose file (the Dokploy docs require this for services other than the one a domain is added to).
-7. **Deploy.** Click Deploy. Order is enforced by `depends_on`: `postgres` + `valkey` healthy, then `db-roles`, `migrator`, `db-grants` run in that order and must exit 0, then `api`, `admin`, `dashboard`. If `migrator` fails, nothing else starts: read its log in the Logs tab.
-8. **Verify.**
+   Dùng *Preview Compose* để xem các label Traefik mà Dokploy thêm vào trước khi deploy. `api`, `admin` và `dashboard` đã tham gia mạng external `dokploy-network` ngay trong file compose (tài liệu Dokploy yêu cầu điều này cho các service không phải service được gắn domain).
+7. **Deploy.** Bấm Deploy. Thứ tự do `depends_on` đảm bảo: `postgres` + `valkey` healthy, rồi `db-roles`, `migrator`, `db-grants` chạy lần lượt và phải thoát 0, rồi tới `api`, `admin`, `dashboard`. Nếu `migrator` lỗi thì không gì khác khởi động: đọc log của nó ở tab Logs.
+8. **Kiểm tra.**
    ```bash
    curl -fsS https://api.example.com/health/ready        # 200
-   curl -fsS https://admin.example.com/config.json       # shows FSH_API_URL
+   curl -fsS https://admin.example.com/config.json       # có FSH_API_URL
    curl -fsS https://app.example.com/config.json
    ```
-9. **Sign in.** `https://admin.example.com`, tenant `root`, `admin@root.com` with `SEED_ADMIN_PASSWORD`; rotate it from Settings → Security.
+9. **Đăng nhập.** `https://admin.example.com`, tenant `root`, `admin@root.com` với `SEED_ADMIN_PASSWORD`; đổi mật khẩu ở Settings → Security.
+10. **Chạy thử restore ngay.** Trong Terminal của container `backup`: `backup.sh` rồi `restore-verify.sh`. Đừng chờ lịch tháng: lúc đó mới biết cấu hình R2 sai thì đã mất cả tháng backup.
 
-Redeploys (new image tag or `git push` with auto-deploy) re-run `migrator` first, so migrations are applied before the new API starts. Pin `FSH_IMAGE_TAG` to a release version instead of `latest` for repeatable rollbacks. Until the first `v*` tag is published CI pushes only `dev-latest`, so set `FSH_IMAGE_TAG=dev-latest` for the first deploy.
+Redeploy (đổi image tag, hoặc `git push` có bật auto-deploy) chạy lại `migrator` trước, nên migration được áp trước khi API mới khởi động. `api` và `migrator` có `pull_policy: always`: Dokploy chạy `up -d --build` mà không `--pull`, nên nếu thiếu dòng này, tag di động như `dev-latest` sẽ không bao giờ được kéo lại. Hiện chưa có tag `v*` nào, CI chỉ đẩy `dev-latest`, nên giữ `FSH_IMAGE_TAG=dev-latest`; khi đã có release, ghim `FSH_IMAGE_TAG` vào một phiên bản để rollback lặp lại được.
 
-> Pitfall: Dokploy keeps bind mounts of repository files only under `../files`; relative paths into the repo can be lost between deploys. Use named volumes for data (this file does) and Dokploy *File Mounts* for config files.
+> Lưu ý: dữ liệu ghi vào bind mount từ repo sẽ mất khi redeploy (Dokploy chỉ giữ bind mount của file repo dưới `../files`, đường dẫn tương đối vào repo có thể bị mất giữa các lần deploy). Script **chỉ đọc** mount từ repo (`./postgres-init`, `./scripts`) thì ổn vì repo được clone lại trước mỗi `compose up`. Dữ liệu thì dùng named volume (file này làm vậy) và *File Mounts* của Dokploy cho file cấu hình.
 
 ## Database roles
 
@@ -54,9 +57,11 @@ Ba role, tạo bởi hai service one-shot cùng chạy `scripts/db-roles.sh` →
 |---|---|---|
 | `app_migrate` | `migrator` | Sở hữu database và mọi schema module; DDL + DML. Không superuser. |
 | `app_runtime` | `api` | `USAGE` trên schema, `SELECT/INSERT/UPDATE/DELETE` trên bảng, `USAGE/SELECT` trên sequence. Không `CREATE/DROP/ALTER` ở schema module. Sở hữu schema `hangfire` (Hangfire tự tạo/migrate bảng của nó khi API khởi động). **Append-only trên schema `audit`**: chỉ `SELECT` + `INSERT`. |
-| `app_readonly` | người vận hành (báo cáo, hỗ trợ) | `SELECT` trên mọi bảng, kể cả `hangfire`. |
+| `app_readonly` | `backup` và người vận hành (báo cáo, hỗ trợ) | `SELECT` trên mọi bảng và sequence, kể cả `hangfire`. |
 
 `fsh` (bootstrap superuser, mật khẩu `POSTGRES_PASSWORD`) chỉ dùng cho `db-roles` và cứu hộ, không bao giờ cho app. Connection string của `migrator` và `api` được compose tự ghép từ `APP_MIGRATE_PASSWORD` / `APP_RUNTIME_PASSWORD` (không còn biến `DB_*_CONNECTION`). Mật khẩu chỉ nên là ký tự an toàn cho connection string (không `;`, không khoảng trắng): `openssl rand -hex 24`. Postgres không publish port; truy cập thủ công qua tab *Terminal* của container `postgres` (`psql -U app_readonly fsh`).
+
+> **`app_readonly` đọc được mọi bảng, kể cả mật khẩu băm của người dùng** (`identity."Users"`). "Chỉ đọc" không có nghĩa là "không nhạy cảm": coi `APP_READONLY_PASSWORD` là secret production như các mật khẩu khác. Cùng lý do, mọi bản dump của nó chứa các hash đó.
 
 **Vì sao service one-shot chứ không phải `/docker-entrypoint-initdb.d`.** Thư mục đó chỉ chạy lúc khởi tạo volume rỗng: không áp dụng được cho DB đã có, không đổi được mật khẩu, không re-grant được. `db-roles` idempotent nên chạy lại mỗi deploy là an toàn. Script được bind-mount từ repo (`./postgres-init`, `./scripts`): Dokploy clone lại repo ở mỗi lần deploy *trước* khi `compose up`, nên file luôn có mặt khi container one-shot khởi động (khác với dữ liệu, thứ phải nằm trong named volume). Muốn chạy tay (ví dụ sau khi thêm module): Redeploy, hoặc trong Terminal của container `postgres`:
 
@@ -86,10 +91,10 @@ Script **không bao giờ xoá** gì trên remote (chỉ `rclone copyto`). Thờ
 
 1. R2 → *Create bucket* (ví dụ `fsh-backups`). Bucket phải tạo sẵn: token chỉ cần quyền object nên service không tạo bucket.
 2. R2 → *Manage API tokens* → tạo token **Object Read & Write**, giới hạn đúng bucket đó. Lấy *Access Key ID*, *Secret Access Key* và endpoint `https://<account-id>.r2.cloudflarestorage.com`.
-3. Environment tab: `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, `BACKUP_S3_ACCESS_KEY`, `BACKUP_S3_SECRET_KEY` (xem `.env.example`). `BACKUP_S3_PROVIDER` mặc định `Cloudflare`; dùng `Other` cho S3-compatible khác (RustFS, MinIO).
+3. Tab Environment: `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, `BACKUP_S3_ACCESS_KEY`, `BACKUP_S3_SECRET_KEY` (xem `.env.example`). `BACKUP_S3_PROVIDER` mặc định `Cloudflare`; dùng `Other` cho S3-compatible khác (RustFS, MinIO).
 4. **Retention bằng lifecycle rule**: bucket → *Settings* → *Object lifecycle rules* → *Add rule*: prefix `fsh/` (đúng `BACKUP_S3_PREFIX`), *Delete uploaded objects after* **30 days** (chỉnh theo nhu cầu; dump hằng ngày × 30 ngày là đủ cho đa số). Không tạo rule thì backup tích luỹ mãi.
 
-Lưu ý: backup chỉ gồm **database**. Volume `api_files` (hoặc bucket `fsh` của profile `storage`) cần sao lưu riêng. Dump chưa mã hoá phía client và chứa dữ liệu người dùng: giữ bucket ở chế độ private, token chỉ cấp cho bucket này. Thư mục làm việc là volume `backup_work`; cần trống khoảng 3 lần kích thước dump (dump + cluster tạm).
+Bản dump chưa mã hoá phía client và chứa dữ liệu người dùng (kể cả hash mật khẩu): giữ bucket ở chế độ private, token chỉ cấp cho bucket này. Thư mục làm việc là volume `backup_work`; cần trống khoảng 3 lần kích thước dump (dump + cluster tạm).
 
 ### Chạy tay
 
@@ -100,58 +105,123 @@ backup.sh           # backup ngay, in ra tên file đã tải lên
 restore-verify.sh   # kiểm bản mới nhất, exit 0 = restore được
 ```
 
-Chạy `restore-verify.sh` sau lần deploy đầu tiên, đừng đợi ngày 1 hằng tháng: lúc đó mới biết cấu hình R2 sai thì đã mất một tháng backup.
+### Khôi phục sau khi mất VPS (DR)
+
+Backup chỉ chứa **database**. Những thứ sau **không** nằm trong đó, và thiếu chúng thì khôi phục không trọn vẹn:
+
+| Thứ | Vì sao quan trọng | Làm gì |
+|---|---|---|
+| **Giá trị tab Environment của Dokploy** (đặc biệt `BACKUP_S3_*`, `APP_*_PASSWORD`, `POSTGRES_PASSWORD`, `JWT_SIGNING_KEY`) | Không có `BACKUP_S3_*` thì không tải được backup; không có `JWT_SIGNING_KEY` thì mọi phiên đăng nhập cũ mất hiệu lực. Chúng chỉ nằm trên VPS. | Lưu một bản ở **ngoài VPS** (password manager), cập nhật mỗi khi đổi. |
+| **Khoá Data Protection** (volume `valkey_data`, khoá `DataProtection-Keys`) | API lưu khoá Data Protection **chỉ trong Valkey**; chúng mã hoá secret của webhook. Valkey mới sau DR có khoá mới, nên secret webhook đã lưu trong database **không giải mã được**. | Hoặc sao lưu volume `valkey_data` (snapshot VPS hoặc tính năng sao lưu volume của Dokploy; stack này chưa tự động hoá việc đó), hoặc chấp nhận và **cấp lại secret cho từng webhook endpoint** sau DR. |
+| **Volume `api_files`** (provider `local`) hoặc volume `rustfs_data` (profile `storage`) | File người dùng tải lên. **Không được sao lưu off-site.** | Xem [Lưu file off-site bằng R2](#lưu-file-off-site-bằng-r2). |
+| Cache và kho idempotency trong Valkey | Dựng lại được. | Không cần. |
+
+Trình tự DR trên VPS mới: cài Dokploy, tạo lại project, dán Environment từ password manager, **deploy bình thường** (tạo role, schema rỗng, seed), rồi làm đúng quy trình dưới. (Nếu `valkey_data` đã được khôi phục thì khôi phục nó *trước* lần deploy.)
 
 ### Restore thật vào prod khi có sự cố
 
-Dựa vào việc dump giữ nguyên owner và quyền của `app_migrate` / `app_runtime`, nên các role phải tồn tại trong cluster trước. Nếu mất cả volume `pg_data`, **deploy lại như bình thường trước** (tạo role, schema rỗng, seed), rồi:
+Các nguyên tắc: **không `DROP` gì cả**; DB hiện tại chỉ được *đổi tên* và giữ nguyên cho đến khi bản restore được chứng minh tốt; mọi bước nguy hiểm dừng ngay khi lỗi. Dump giữ nguyên owner và quyền của `app_migrate` / `app_runtime`, nên các role phải tồn tại trong cluster trước (đó là lý do phải deploy trước trong trường hợp DR).
 
-1. Dừng ghi: Dokploy → dừng service `api` (và `admin`, `dashboard` nếu muốn trang bảo trì).
-2. Trong Terminal của container `backup`, tải và kiểm bản cần khôi phục:
-   ```bash
-   . /usr/local/lib/backup-common.sh
-   cd /var/lib/postgresql/work
-   rclone lsf "$REMOTE" | sort | tail                     # chọn bản: fsh-<UTC>.dump
-   rclone copyto "$REMOTE/fsh-20261101T020000Z.dump" dump
-   rclone copyto "$REMOTE/fsh-20261101T020000Z.dump.sha256" dump.sha256
-   sed -i 's/ .*/  dump/' dump.sha256 && sha256sum -c dump.sha256   # phải in "dump: OK"
-   ```
-3. **Giữ lại database hiện tại** (không bao giờ `DROP` trước khi bản restore được chứng minh). Bằng superuser `fsh` (dán `POSTGRES_PASSWORD` tại chỗ, đừng lưu vào đâu): dump lần nữa làm lưới an toàn thứ hai, rồi *đổi tên* DB cũ và tạo `fsh` mới rỗng:
-   ```bash
-   export PGHOST=postgres PGUSER=fsh PGPASSWORD='<POSTGRES_PASSWORD>'
-   old=fsh_before_restore_$(date -u +%Y%m%d)
-   pg_dump -Fc -f before-restore.dump fsh && rclone copyto before-restore.dump "$REMOTE/before-restore-$(date -u +%Y%m%dT%H%M%SZ).dump"
-   #  ^ nếu DB hỏng nặng đến mức dump lỗi thì vẫn đi tiếp: bước đổi tên bên dưới giữ nguyên dữ liệu.
-   psql -d postgres -v old="$old" <<'SQL'
-   SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'fsh' AND pid <> pg_backend_pid();
-   ALTER DATABASE fsh RENAME TO :"old";
-   CREATE DATABASE fsh OWNER app_migrate;
-   SQL
-   ```
-   (`ALTER ... RENAME` lỗi "being accessed by other users" nghĩa là còn kết nối: chắc chắn `api` đã dừng rồi chạy lại.)
-4. **Nạp dump vào `fsh` mới**:
-   ```bash
-   pg_restore --exit-on-error -d fsh dump
-   ```
-   Nếu lệnh này lỗi thì DB cũ vẫn nguyên: bỏ DB mới còn dở và đổi tên DB cũ về lại, rồi điều tra (thử bản backup khác):
-   ```bash
-   psql -d postgres -v old="$old" <<'SQL'
-   DROP DATABASE fsh;
-   ALTER DATABASE :"old" RENAME TO fsh;
-   SQL
-   ```
-5. **Kiểm tra trước khi cho `api` chạy lại**: so sánh với DB cũ, rồi **Redeploy** để `db-roles` → `migrator` (no-op, lịch sử migration đã nằm trong dump) → `db-grants` đặt lại quyền cấp database, mật khẩu role và quyền trên schema, rồi `api` lên:
-   ```bash
-   for d in fsh "$old"; do psql -d "$d" -Atc "SELECT '$d', (SELECT count(*) FROM identity.\"Users\"), (SELECT count(*) FROM tenant.\"Tenants\")"; done
-   ```
-   Sau redeploy kiểm `https://api.example.com/health/ready` và đăng nhập.
-6. Dọn file trong volume: `rm -f dump dump.sha256 before-restore.dump`. DB `fsh_before_restore_<ngày>` **vẫn nằm trong Postgres**, chiếm đĩa. Hệ thống không bao giờ tự xoá nó; chỉ khi đã chạy ổn đủ lâu bạn mới xoá tay (`DROP DATABASE fsh_before_restore_<ngày>`), hoặc giữ nó để so sánh dữ liệu.
+Trước khi bắt đầu, nhớ ba điều:
 
-Muốn thử mà không đụng prod: `restore-verify.sh` làm đúng phần nạp dump này trong cluster tạm. Bản dump cũ hơn schema hiện tại vẫn restore được; `migrator` sẽ áp các migration còn thiếu ở bước 4.
+- **Chọn bản dump từ *trước* sự cố.** Cron backup vẫn chạy mỗi đêm: bản mới nhất có thể đã chụp dữ liệu hỏng.
+- **Tránh làm quanh 02:00 UTC.** Giữa bước 3b và bước 4, `fsh` là DB rỗng; nếu cron backup chạy đúng lúc đó, nó tải lên một bản dump rỗng làm "bản mới nhất". Sau khi xong, chạy `backup.sh` thủ công và kiểm tra bản mới.
+- **Chạy từng khối một, theo thứ tự**, trong cùng một phiên Terminal (biến `old`, `dump_ok` sống trong phiên đó). Khối nào in `LỖI` thì **dừng**, đừng chạy khối kế tiếp.
+
+#### Bước 1. Dừng ghi
+
+Dokploy → dừng service `api` (và `admin`, `dashboard` nếu muốn trang bảo trì). Nếu giao diện Dokploy không dùng được, dùng CLI trên VPS: tìm tên container rồi dừng nó (`restart: unless-stopped` không khởi động lại container đã bị dừng thủ công):
+
+```bash
+docker ps --format '{{.Names}}' | grep -- '-api-'      # tên dạng <project>-api-1
+docker stop <tên-container-api>
+```
+
+#### Bước 2. Tải và kiểm bản dump
+
+Trong Terminal của container `backup`:
+
+```bash
+. /usr/local/lib/backup-common.sh
+cd /var/lib/postgresql/work
+rclone lsf "$REMOTE" | sort | tail -n 15        # chọn bản TRƯỚC sự cố: fsh-<UTC>.dump
+dump_name=fsh-20261101T020000Z.dump             # sửa lại cho đúng bản đã chọn
+rclone copyto "$REMOTE/$dump_name" dump
+rclone copyto "$REMOTE/$dump_name.sha256" dump.sha256
+sed -i 's/ .*/  dump/' dump.sha256 && sha256sum -c dump.sha256   # phải in "dump: OK"
+```
+
+#### Bước 3a. Lưới an toàn: dump DB hiện tại
+
+Dán `POSTGRES_PASSWORD` tại chỗ (đừng lưu vào đâu). Khối này dump DB hiện tại và đẩy lên bucket; nó chỉ đặt `dump_ok=1` khi cả hai việc thành công:
+
+```bash
+export PGHOST=postgres PGUSER=fsh PGPASSWORD='<POSTGRES_PASSWORD>'
+old=fsh_before_restore_$(date -u +%Y%m%dT%H%M%SZ); echo "GHI LẠI TÊN NÀY: $old"
+dump_ok=
+rm -f before-restore.dump
+pg_dump -Fc -f before-restore.dump fsh &&
+  rclone copyto before-restore.dump "$REMOTE/before-restore-$old.dump" &&
+  dump_ok=1
+[ "$dump_ok" = 1 ] && echo "3a OK: đã có bản dump an toàn" || echo "3a LỖI: DỪNG, không chạy bước 3b"
+```
+
+Nếu 3a lỗi thì **dừng và điều tra** (DB hỏng nặng? bucket không ghi được?). Đổi tên DB thủ công không làm mất dữ liệu, nhưng đó là quyết định của người vận hành, không phải của quy trình này.
+
+#### Bước 3b. Đổi tên DB hiện tại, tạo `fsh` mới rỗng
+
+```bash
+[ "$dump_ok" = 1 ] && [ -n "$old" ] && psql -X -v ON_ERROR_STOP=1 -d postgres -v old="$old" <<'SQL'
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'fsh' AND pid <> pg_backend_pid();
+ALTER DATABASE fsh RENAME TO :"old";
+CREATE DATABASE fsh OWNER app_migrate;
+SQL
+```
+
+`ON_ERROR_STOP` làm psql dừng ở câu lệnh lỗi đầu tiên: nếu đổi tên thất bại thì `fsh` cũ vẫn nguyên và không có DB mới nào được tạo. (Lỗi "being accessed by other users" nghĩa là còn kết nối: chắc chắn `api` đã dừng rồi chạy lại khối này.)
+
+#### Bước 4. Nạp dump vào `fsh` mới
+
+```bash
+pg_restore --exit-on-error -d fsh dump && echo "4 OK" || echo "4 LỖI: chạy khối rollback bên dưới"
+```
+
+Nếu in `4 LỖI`, **rollback bằng đổi tên** (không `DROP`): DB nạp dở được giữ lại dưới tên `fsh_failed_restore_<UTC>` để điều tra, DB cũ trả về tên `fsh`. Khối này tự kiểm tra DB cũ còn tồn tại trước khi đổi bất cứ thứ gì (`1/count(*)` chia cho 0 nếu `$old` rỗng hoặc không có, và `ON_ERROR_STOP` dừng ngay):
+
+```bash
+failed=fsh_failed_restore_$(date -u +%Y%m%dT%H%M%SZ)
+[ -n "$old" ] && psql -X -v ON_ERROR_STOP=1 -d postgres -v old="$old" -v failed="$failed" <<'SQL'
+SELECT 1/count(*) AS old_database_exists FROM pg_database WHERE datname = :'old';
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'fsh' AND pid <> pg_backend_pid();
+ALTER DATABASE fsh RENAME TO :"failed";
+ALTER DATABASE :"old" RENAME TO fsh;
+SQL
+```
+
+Nếu chính khối rollback báo lỗi thì **dừng**: DB cũ vẫn còn nguyên dưới tên `$old` (xem `psql -d postgres -c '\l'`); đổi tên về `fsh` bằng tay khi đã hiểu tình hình.
+
+#### Bước 5. So sánh, rồi Redeploy
+
+Số dòng của DB mới phải hợp lý so với DB cũ:
+
+```bash
+for d in fsh "$old"; do psql -X -d "$d" -Atc "SELECT '$d', (SELECT count(*) FROM identity.\"Users\"), (SELECT count(*) FROM tenant.\"Tenants\")"; done
+```
+
+Rồi **Redeploy** trên Dokploy: `db-roles` → `migrator` (lịch sử migration đã nằm trong dump; bản dump cũ hơn schema hiện tại thì migrator áp các migration còn thiếu) → `db-grants` đặt lại quyền cấp database, mật khẩu role và quyền trên schema, rồi `api` lên. Kiểm `https://api.example.com/health/ready` và đăng nhập.
+
+#### Bước 6. Sau khi chạy lại
+
+- Chạy `backup.sh`, rồi `restore-verify.sh`, để bản mới nhất trong bucket là bản của DB đã khôi phục.
+- Cache cũ trong Valkey (liên quan DB trước sự cố) tự hết hạn; **không** chạy `FLUSHALL` hay `FLUSHDB`: chúng xoá luôn khoá Data Protection (mất khả năng giải mã secret webhook).
+- Dọn file trong volume: `rm -f dump dump.sha256 before-restore.dump`.
+- DB `fsh_before_restore_<UTC>` (và `fsh_failed_restore_<UTC>` nếu có) **vẫn nằm trong Postgres** và chiếm đĩa. Hệ thống không bao giờ tự xoá chúng; chỉ khi đã chạy ổn đủ lâu bạn mới xoá tay bằng `DROP DATABASE`, hoặc giữ lại để đối chiếu dữ liệu. Bản `before-restore-*.dump` trong bucket chịu lifecycle rule như các bản khác.
+
+Muốn thử mà không đụng prod: `restore-verify.sh` làm đúng phần nạp dump này trong cluster tạm.
 
 ### Giám sát bằng Uptime Kuma (tuỳ chọn)
 
-Cron im lặng khi hỏng nên nên có tín hiệu "còn sống". Trong Uptime Kuma tạo hai monitor loại **Push** và dán URL của chúng vào Environment tab:
+Cron im lặng khi hỏng nên nên có tín hiệu "còn sống". Trong Uptime Kuma tạo hai monitor loại **Push** và dán URL của chúng vào tab Environment:
 
 | Biến | Monitor | Heartbeat interval gợi ý |
 |---|---|---|
@@ -162,52 +232,77 @@ Script chỉ ping khi **thành công**, nên thiếu heartbeat = backup/verify h
 
 ## Profiles
 
-| Profile | Services | Default |
+| Profile | Services | Mặc định |
 |---|---|---|
-| `storage` | `rustfs`, `rustfs-init` | off |
-| `ai` | reserved name for a future ai-service / Langfuse; **nothing is defined yet** | n/a |
+| `storage` | `rustfs`, `rustfs-init` | tắt |
+| `ai` | tên giữ chỗ cho ai-service / Langfuse sau này; **hiện chưa định nghĩa gì** | không áp dụng |
 
-**Object storage.** With `storage` off, the API runs `Storage__Provider=local`: files are written under `/app/wwwroot` of the api container, which is mounted from the named volume `api_files` so they survive redeploys (the one-shot `init` service makes the volume writable for the chiseled API user, UID 1654). Back that volume up with the database. The local provider serves everything from `wwwroot` and does not enforce `private/`, so prefer S3 for real data. To use S3:
+**Lưu file.** Có ba cách, và **không cách nào trong hai cách đầu được sao lưu off-site**:
 
-1. Set `COMPOSE_PROFILES=storage`, `FSH_STORAGE_PROVIDER=s3`, `FSH_S3_PUBLIC_URL=https://s3.example.com`, `RUSTFS_ACCESS_KEY`, `RUSTFS_SECRET_KEY` in the Environment tab.
-2. Add a Dokploy domain `s3.example.com` → service `rustfs`, port `9000`, HTTPS on. Traefik keeps the original `Host` header, which the presigned signature covers.
-3. Redeploy. `rustfs-init` creates the bucket `fsh` and opens anonymous read on `public/*` only.
+| Cách | Cấu hình | Dữ liệu nằm ở | Off-site? |
+|---|---|---|---|
+| Mặc định, provider `local` | không cần gì | volume `api_files` (mount tại `/app/wwwroot`) | **Không** |
+| Profile `storage` (RustFS tự host) | `COMPOSE_PROFILES=storage`, `FSH_STORAGE_PROVIDER=s3`, `FSH_S3_PUBLIC_URL`, `RUSTFS_*` | volume `rustfs_data` | **Không** |
+| S3 / R2 bên ngoài | `FSH_STORAGE_PROVIDER=s3`, `FSH_S3_*`, `RUSTFS_*` (không cần profile) | bucket bên ngoài | Có (do nhà cung cấp) |
 
-The deploy fails closed on a half-made configuration: `storage-guard` stops RustFS from starting with a blank access or secret key (it would fall back to its default credentials on a public domain), and `init` stops the API from starting with `FSH_STORAGE_PROVIDER=s3` when `FSH_S3_PUBLIC_URL` or a key is missing. Read the failing service's log for the message.
+Với provider `local`, file ghi dưới `/app/wwwroot` của container api, được mount từ named volume `api_files` nên sống sót qua redeploy (service one-shot `init` chỉnh quyền volume cho user API của image chiseled, UID 1654). Provider `local` phục vụ mọi thứ từ `wwwroot` và không áp dụng `private/`, nên dữ liệu thật nên dùng S3. **Service `backup` chỉ sao lưu database**: mất VPS là mất `api_files`/`rustfs_data` trừ khi bạn tự snapshot chúng.
 
-Alternatively point `Storage__S3__*` at an external provider (Cloudflare R2, AWS S3) and skip the profile.
+**Dùng RustFS tự host (profile `storage`):**
+
+1. Trong tab Environment đặt `COMPOSE_PROFILES=storage`, `FSH_STORAGE_PROVIDER=s3`, `FSH_S3_PUBLIC_URL=https://s3.example.com`, `RUSTFS_ACCESS_KEY`, `RUSTFS_SECRET_KEY`.
+2. Thêm domain Dokploy `s3.example.com` → service `rustfs`, cổng `9000`, bật HTTPS. Traefik giữ nguyên header `Host` gốc, thứ mà chữ ký presigned URL bao phủ.
+3. Redeploy. `rustfs-init` tạo bucket (`fsh`, hoặc `FSH_S3_BUCKET`) và mở quyền đọc ẩn danh chỉ cho `public/*`.
+
+Deploy **fail closed** với cấu hình dở dang: `storage-guard` không cho RustFS khởi động với access/secret key trống (nó sẽ quay về key mặc định trên một domain public), và `init` không cho API khởi động với `FSH_STORAGE_PROVIDER=s3` khi `FSH_S3_PUBLIC_URL`, `FSH_S3_SERVICE_URL` hoặc key thiếu/không phải URL http(s). Đọc log của service lỗi để thấy thông báo.
+
+### Lưu file off-site bằng R2
+
+Trỏ `Storage__S3__*` vào một bucket R2 (hoặc S3 khác) và bỏ qua profile. Tất cả đặt được từ tab Environment:
+
+| Biến | Giá trị cho R2 | Ghi chú |
+|---|---|---|
+| `FSH_STORAGE_PROVIDER` | `s3` | |
+| `FSH_S3_SERVICE_URL` | `https://<account-id>.r2.cloudflarestorage.com` | Nơi API tự gọi. Mặc định `http://rustfs:9000`. |
+| `FSH_S3_PUBLIC_URL` | cùng endpoint trên | Endpoint dùng để ký presigned URL cho trình duyệt (gốc URL, không có path). |
+| `FSH_S3_BUCKET` | tên bucket **file** (mặc định `fsh`) | Khác bucket backup; bucket phải tạo sẵn. |
+| `FSH_S3_PUBLIC_BASE_URL` | domain phục vụ file public, ví dụ `https://files.example.com` | Gắn custom domain (hoặc bật public access) cho bucket trong R2. Bỏ trống thì mặc định `<FSH_S3_PUBLIC_URL>/<bucket>`, đúng cho RustFS dạng path-style, thường **không** đúng cho R2. |
+| `RUSTFS_ACCESS_KEY`, `RUSTFS_SECRET_KEY` | access key / secret của token R2 | Tên biến giữ nguyên dù không dùng RustFS. Dùng token riêng cho bucket file. |
+
+Trong R2 còn phải đặt CORS cho bucket file cho phép origin `FSH_ADMIN_URL` và `FSH_DASHBOARD_URL` (phương thức `PUT`, `GET`, header `Content-Type`), vì trình duyệt upload thẳng lên presigned URL. Lưu ý: cấu hình này chưa được thử với R2 thật trong repo (chỉ kiểm bằng `docker compose config` và RustFS); thử một lần upload sau khi cấu hình.
 
 ## Module switches
 
-`FSH_MODULE_BILLING`, `FSH_MODULE_CATALOG`, `FSH_MODULE_TICKETS`, `FSH_MODULE_CHAT` map to `Modules__{Name}__Enabled` and are all `false` by default. They are defined once in the compose file (`x-modules`) and reach `migrator` and `api` identically; change them in the Environment tab and redeploy so the migrator creates or skips the module's schema.
+`FSH_MODULE_BILLING`, `FSH_MODULE_CATALOG`, `FSH_MODULE_TICKETS`, `FSH_MODULE_CHAT` ánh xạ sang `Modules__{Name}__Enabled` và đều mặc định `false`. Chúng được định nghĩa một lần trong file compose (`x-modules`) và tới `migrator` lẫn `api` giống hệt nhau; đổi trong tab Environment rồi redeploy để migrator tạo hoặc bỏ qua schema của module.
 
-## Uptime monitoring (Uptime Kuma)
+## Giám sát uptime của ứng dụng
 
-Run [Uptime Kuma](https://github.com/louislam/uptime-kuma) as its **own** Dokploy service (Templates → Uptime Kuma), not inside this compose, so it stays up while you redeploy the app. Give it its own domain, then add HTTP(s) monitors:
+Chạy [Uptime Kuma](https://github.com/louislam/uptime-kuma) như **một service Dokploy riêng** (Templates → Uptime Kuma), không nằm trong compose này, để nó vẫn sống khi bạn redeploy ứng dụng. Cho nó domain riêng, rồi thêm các monitor HTTP(s):
 
-| Monitor | URL | Expect |
+| Monitor | URL | Kỳ vọng |
 |---|---|---|
 | API | `https://api.example.com/health/ready` | 200 |
 | Admin | `https://admin.example.com/` | 200 |
 | Dashboard | `https://app.example.com/` | 200 |
 
-Add a notification channel (e-mail, Telegram, Slack) and attach it to all three. The API and migrator images are chiseled (no shell, no curl), so there is no in-container healthcheck: external monitoring on `/health/ready` is the health signal.
+Thêm một kênh thông báo (e-mail, Telegram, Slack) và gắn vào cả ba. Image API và migrator là chiseled (không có shell, không có curl), nên không có healthcheck trong container: giám sát bên ngoài ở `/health/ready` là tín hiệu sức khoẻ. Monitor Push cho backup nằm ở [Giám sát bằng Uptime Kuma](#giám-sát-bằng-uptime-kuma-tuỳ-chọn).
 
-## Troubleshooting
+## Xử lý sự cố
 
-| Symptom | Likely cause |
+| Triệu chứng | Nguyên nhân thường gặp |
 |---|---|
-| `... is required` when deploying | An empty required variable in the Environment tab; the message names it. |
-| `network dokploy-network declared as external, but could not be found` | Not running under Dokploy (it creates the network), or Dokploy's network was removed. Locally: `docker network create dokploy-network`. |
-| `api` never starts | `db-roles`, `migrator` or `db-grants` exited non-zero. Check their logs: missing/unsafe `APP_*_PASSWORD`, wrong `POSTGRES_PASSWORD` (if the volume predates a password change), or `JWT_SIGNING_KEY` containing `replace-with`. |
-| `pull access denied` for `fsh-api` | The GHCR package is private and the VPS has no credential (step 2), or `GHCR_OWNER` is wrong. |
-| 404 / 502 from Traefik on a domain | Service name or port in the Domains tab doesn't match the table above, or the service isn't on `dokploy-network`. |
-| CORS error in the browser | `FSH_ADMIN_URL` / `FSH_DASHBOARD_URL` differ from the origins actually served. |
-| `backup` log: `BACKUP_S3_... is not set`, `NoSuchBucket`, `AccessDenied` | Biến thiếu, bucket chưa tạo, hoặc token R2 không có quyền object read/write trên bucket đó. Chạy lại `backup.sh` trong Terminal để thấy lỗi đầy đủ. |
-| Cannot load `libgssapi_krb5` in the log | Connection string lacks `GSS Encryption Mode=Disable` (harmless). |
+| `... is required` khi deploy | Một biến bắt buộc trong tab Environment còn trống; thông báo nêu tên biến. |
+| `network dokploy-network declared as external, but could not be found` | Không chạy dưới Dokploy (nó tạo mạng này), hoặc mạng của Dokploy đã bị xoá. Chạy local: `docker network create dokploy-network`. |
+| `api` không bao giờ khởi động | `db-roles`, `migrator` hoặc `db-grants` thoát khác 0. Xem log của chúng: thiếu/không an toàn `APP_*_PASSWORD`, sai `POSTGRES_PASSWORD` (nếu volume có trước khi đổi mật khẩu), hoặc `JWT_SIGNING_KEY` chứa `replace-with`. Hoặc `init` lỗi vì cấu hình storage (xem log của nó). |
+| Redeploy mà vẫn chạy image cũ | `FSH_IMAGE_TAG` không phải tag CI đã đẩy (hiện chỉ có `dev-latest`). `api`/`migrator` đã `pull_policy: always`, nên không phải do cache. |
+| `pull access denied` cho `fsh-api` | Package GHCR là private và VPS không có credential (bước 2), hoặc `GHCR_OWNER` sai. |
+| 404 / 502 từ Traefik trên một domain | Tên service hoặc cổng ở tab Domains không khớp bảng trên, hoặc service không nằm trên `dokploy-network`. |
+| Lỗi CORS trong trình duyệt | `FSH_ADMIN_URL` / `FSH_DASHBOARD_URL` khác với origin thực sự được phục vụ. |
+| Log `Cannot load libgssapi_krb5` | Connection string thiếu `GSS Encryption Mode=Disable` (vô hại). |
+| Log `backup`: `BACKUP_S3_... is not set`, `NoSuchBucket`, `AccessDenied` | Biến thiếu, bucket chưa tạo, hoặc token R2 không có quyền object read/write trên bucket đó. Chạy lại `backup.sh` trong Terminal để thấy lỗi đầy đủ. |
+| `restore-verify` báo bản mới nhất quá cũ | Backup hằng ngày không còn lên bucket: xem log của `backup` (thường là token/endpoint). |
 
-## Sources
+## Nguồn
 
-- Dokploy, Docker Compose domains (network, Traefik labels, `expose`): https://docs.dokploy.com/docs/core/docker-compose/domains
-- Dokploy, Docker Compose (source, environment variables, volumes, Stack vs Compose): https://docs.dokploy.com/docs/core/docker-compose
-- Base stack and its conventions: `deploy/docker/README.md`
+- Dokploy, Docker Compose domains (network, label Traefik, `expose`): https://docs.dokploy.com/docs/core/docker-compose/domains
+- Dokploy, Docker Compose (source, biến môi trường, volumes, Stack vs Compose): https://docs.dokploy.com/docs/core/docker-compose
+- Stack gốc và quy ước của nó: `deploy/docker/README.md`
