@@ -272,7 +272,7 @@ Trong R2 còn phải đặt CORS cho bucket file cho phép origin `FSH_ADMIN_URL
 
 ## Module switches
 
-`FSH_MODULE_BILLING`, `FSH_MODULE_CATALOG`, `FSH_MODULE_TICKETS`, `FSH_MODULE_CHAT` ánh xạ sang `Modules__{Name}__Enabled` và đều mặc định `false`. Chúng được định nghĩa một lần trong file compose (`x-modules`) và tới `migrator` lẫn `api` giống hệt nhau; đổi trong tab Environment rồi redeploy để migrator tạo hoặc bỏ qua schema của module.
+`FSH_MODULE_BILLING`, `FSH_MODULE_CATALOG`, `FSH_MODULE_TICKETS`, `FSH_MODULE_CHAT`, `FSH_MODULE_SEARCH`, `FSH_MODULE_ACCESSCONTROL`, `FSH_MODULE_TRANSFER` ánh xạ sang `Modules__{Name}__Enabled` và đều mặc định `false`. Chúng được định nghĩa một lần trong file compose (`x-modules`) và tới `migrator` lẫn `api` giống hệt nhau; đổi trong tab Environment rồi redeploy để migrator tạo hoặc bỏ qua schema của module.
 
 ## Giám sát uptime của ứng dụng
 

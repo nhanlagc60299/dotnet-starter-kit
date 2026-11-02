@@ -16,6 +16,9 @@ x-modules: &modules
   Modules__Catalog__Enabled: ${FSH_MODULE_CATALOG:-false}
   Modules__Tickets__Enabled: ${FSH_MODULE_TICKETS:-false}
   Modules__Chat__Enabled: ${FSH_MODULE_CHAT:-false}
+  Modules__Search__Enabled: ${FSH_MODULE_SEARCH:-false}
+  Modules__AccessControl__Enabled: ${FSH_MODULE_ACCESSCONTROL:-false}
+  Modules__Transfer__Enabled: ${FSH_MODULE_TRANSFER:-false}
 
 services:
   postgres:
