@@ -83,7 +83,7 @@ export function AuthShell({
         </div>
 
         {/* Form card — warm-paper with backdrop blur */}
-        <div className="rounded-xl border border-[var(--color-border)] bg-[oklch(from_var(--color-card)_l_c_h_/_0.85)] backdrop-blur-xl shadow-[0_1px_3px_oklch(0_0_0_/_0.04),0_8px_24px_oklch(0_0_0_/_0.06)]">
+        <div className="rounded-xl border border-[var(--color-border)] bg-[oklch(from_var(--color-card)_l_c_h_/_0.85)] backdrop-blur-xl opaque:bg-[var(--color-card)] opaque:backdrop-blur-none shadow-[0_1px_3px_oklch(0_0_0_/_0.04),0_8px_24px_oklch(0_0_0_/_0.06)]">
           <div className="px-6 py-7 sm:px-8 sm:py-9">{children}</div>
         </div>
 

@@ -171,7 +171,7 @@ export function Topbar() {
       className={cn(
         "sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2",
         "border-b border-[var(--color-border)] bg-[oklch(from_var(--color-background)_l_c_h_/_0.8)]",
-        "px-3 backdrop-blur-sm md:px-5",
+        "px-3 backdrop-blur-sm opaque:bg-[var(--color-background)] opaque:backdrop-blur-none md:px-5",
       )}
     >
       {/* Mobile nav trigger — leading edge on small screens */}

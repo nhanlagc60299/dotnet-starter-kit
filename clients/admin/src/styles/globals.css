@@ -2,6 +2,14 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Solid chrome for people who asked for it: "Reduce transparency" or
+   "Increase contrast" turns frosted surfaces opaque and drops scrim blur.
+   Usage: `opaque:bg-[var(--color-card)] opaque:backdrop-blur-none`. */
+@custom-variant opaque {
+  @media (prefers-reduced-transparency: reduce) { @slot; }
+  @media (prefers-contrast: more) { @slot; }
+}
+
 /* ============================================================================
    FullStackHero Dashboard — Design Tokens
    ----------------------------------------------------------------------------

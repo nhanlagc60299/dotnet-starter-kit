@@ -260,7 +260,7 @@ function ActiveChannel({
       ) : (
         <header
           className={cn(
-            "flex h-12 shrink-0 items-center gap-2 border-b border-[var(--color-border)] bg-[oklch(from_var(--color-background)_l_c_h_/_0.8)] px-3 backdrop-blur-sm md:gap-3 md:px-4",
+            "flex h-12 shrink-0 items-center gap-2 border-b border-[var(--color-border)] bg-[oklch(from_var(--color-background)_l_c_h_/_0.8)] px-3 backdrop-blur-sm opaque:bg-[var(--color-background)] opaque:backdrop-blur-none md:gap-3 md:px-4",
           )}
         >
           {/* Mobile back button — returns to the rail-only view. */}

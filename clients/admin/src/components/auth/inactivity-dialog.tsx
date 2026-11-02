@@ -45,7 +45,7 @@ export function InactivityDialog({
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           className={cn(
-            "fixed inset-0 z-50 bg-[oklch(0_0_0_/_0.45)] backdrop-blur-[6px]",
+            "fixed inset-0 z-50 bg-[oklch(0_0_0_/_0.45)] backdrop-blur-[6px] opaque:backdrop-blur-none",
             "data-[state=open]:animate-fsh-overlay-in data-[state=closed]:animate-fsh-overlay-out",
           )}
         />
