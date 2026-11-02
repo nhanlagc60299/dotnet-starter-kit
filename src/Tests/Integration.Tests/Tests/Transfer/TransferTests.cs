@@ -92,6 +92,36 @@ public sealed class TransferTests
     }
 
     [Fact]
+    public async Task Apply_Should_SaveInBatches_And_UpdateABrandCreatedInAnEarlierBatch()
+    {
+        // 1,001 new brands (two save batches), then a row upserting the first one, which the first batch already saved.
+        string unique = Guid.NewGuid().ToString("N")[..8];
+        var lines = new StringBuilder();
+        for (int i = 0; i < 1001; i++)
+        {
+            lines.Append(System.Globalization.CultureInfo.InvariantCulture, $$"""{"name":"Batch {{unique}} {{i:D4}}","description":"v1"}""").Append('\n');
+        }
+
+        lines.Append(System.Globalization.CultureInfo.InvariantCulture, $$"""{"name":"Batch {{unique}} 0000","description":"v2"}""").Append('\n');
+        byte[] data = Encoding.UTF8.GetBytes(lines.ToString());
+        string sha = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(data));
+        byte[] manifest = Encoding.UTF8.GetBytes($$"""
+            {"format":"fsh.transfer/1","createdAtUtc":"2026-11-02T00:00:00Z",
+             "files":[{"path":"data/{{Brands}}.ndjson","entityType":"{{Brands}}","rows":1002,"sha256":"{{sha}}"}]}
+            """);
+
+        using var root = await _auth.CreateRootAdminClientAsync();
+        var upload = await UploadAsync(root, Zip(("manifest.json", manifest), ($"data/{Brands}.ndjson", data)), "batch.zip");
+        using var applyResponse = await root.PostAsJsonAsync($"{TestConstants.TransferBasePath}/imports/{upload.Id}/apply", new { mode = "Upsert" });
+        applyResponse.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        var applied = await WaitForJobAsync(root, upload.Id);
+
+        (applied.Summary!.Created, applied.Summary.Updated, applied.Summary.Failed).ShouldBe((1001, 1, 0));
+        (await FindBrandAsync(root, $"Batch {unique} 0000"))!.Description.ShouldBe("v2");
+        (await FindBrandAsync(root, $"Batch {unique} 1000"))!.Description.ShouldBe("v1");
+    }
+
+    [Fact]
     public async Task Upload_Should_Return400_When_ArchiveIsCorrupt()
     {
         using var root = await _auth.CreateRootAdminClientAsync();

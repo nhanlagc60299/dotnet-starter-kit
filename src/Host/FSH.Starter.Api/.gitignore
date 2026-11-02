@@ -1,0 +1,2 @@
+# Transfer archives (TransferOptions:LocalDirectory, local storage provider): tenant data, never commit.
+App_Data/

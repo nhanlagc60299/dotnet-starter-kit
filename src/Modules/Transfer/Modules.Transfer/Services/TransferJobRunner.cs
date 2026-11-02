@@ -66,6 +66,12 @@ public sealed class TransferJobRunner(IServiceScopeFactory scopeFactory, ILogger
 
         try
         {
+            // Permissions were checked when the job was requested; the creator may have lost them since.
+            var catalog = services.GetRequiredService<TransferCatalog>();
+            await (kind == TransferJobKind.Export
+                ? catalog.DemandExportAsync(job.EntityTypes, cancellationToken)
+                : catalog.DemandImportAsync(job.EntityTypes, cancellationToken)).ConfigureAwait(false);
+
             if (kind == TransferJobKind.Export)
             {
                 await ExportAsync(services, job, tenant.Id, cancellationToken).ConfigureAwait(false);
@@ -100,12 +106,11 @@ public sealed class TransferJobRunner(IServiceScopeFactory scopeFactory, ILogger
         await using (temp.ConfigureAwait(false))
         {
             var manifest = await TransferArchiveWriter
-                .WriteAsync(temp, sources, DateTime.UtcNow, options.MaxLineBytes, cancellationToken).ConfigureAwait(false);
+                .WriteAsync(temp, sources, DateTime.UtcNow, options, cancellationToken).ConfigureAwait(false);
             long size = temp.Length;
             string sha = await TempArchive.HashAsync(temp, cancellationToken).ConfigureAwait(false);
 
-            string key = ArchiveStore.KeyFor(tenantId, job.Id);
-            await store.SaveAsync(key, temp, cancellationToken).ConfigureAwait(false);
+            string key = await store.SaveAsync(tenantId, job.Id, temp, cancellationToken).ConfigureAwait(false);
 
             var rows = manifest.Files.ToDictionary(f => f.EntityType, f => f.Rows, StringComparer.Ordinal);
             job.CompleteExport(key, $"transfer-export-{job.CreatedAtUtc:yyyyMMdd-HHmmss}.zip", size, sha,

@@ -6,7 +6,10 @@ using System.Text.Json.Nodes;
 
 namespace FSH.Modules.Transfer.Archive;
 
-/// <summary>Writes an <c>fsh.transfer/1</c> zip: one NDJSON file per entity type, then <c>manifest.json</c> with each file's rows and SHA-256.</summary>
+/// <summary>
+/// Writes an <c>fsh.transfer/1</c> zip: one NDJSON file per entity type, then <c>manifest.json</c> with each file's rows
+/// and SHA-256. Refuses (400) what <see cref="TransferArchive.Open"/> would refuse: over-long rows or too many rows.
+/// </summary>
 public static class TransferArchiveWriter
 {
     private static readonly byte[] Newline = "\n"u8.ToArray();
@@ -15,11 +18,12 @@ public static class TransferArchiveWriter
         Stream output,
         IReadOnlyList<(string EntityType, IAsyncEnumerable<JsonObject> Rows)> sources,
         DateTime createdAtUtc,
-        int maxLineBytes,
+        TransferOptions limits,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(output);
         ArgumentNullException.ThrowIfNull(sources);
+        ArgumentNullException.ThrowIfNull(limits);
 
         var files = new List<TransferManifestFile>(sources.Count);
         using (var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true, Encoding.UTF8))
@@ -45,11 +49,15 @@ public static class TransferArchiveWriter
                 {
                     await foreach (var row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
                     {
-                        byte[] line = JsonSerializer.SerializeToUtf8Bytes(row, TransferFormat.LineJson);
-                        if (line.Length > maxLineBytes)
+                        if (count == limits.MaxRowsPerFile)
                         {
-                            throw new InvalidOperationException(
-                                $"Row {count + 1} of '{entityType}' is longer than {maxLineBytes} bytes.");
+                            throw TransferArchive.Invalid($"'{entityType}' has more than {limits.MaxRowsPerFile} rows; export fewer types or raise TransferOptions:MaxRowsPerFile.");
+                        }
+
+                        byte[] line = JsonSerializer.SerializeToUtf8Bytes(row, TransferFormat.LineJson);
+                        if (line.Length > limits.MaxLineBytes)
+                        {
+                            throw TransferArchive.Invalid($"Row {count + 1} of '{entityType}' is longer than {limits.MaxLineBytes} bytes.");
                         }
 
                         await stream.WriteAsync(line, cancellationToken).ConfigureAwait(false);

@@ -44,9 +44,8 @@ public sealed partial class CreateImportCommandHandler(
             await catalog.DemandImportAsync(entityTypes, cancellationToken).ConfigureAwait(false);
 
             var jobId = Guid.CreateVersion7();
-            string key = ArchiveStore.KeyFor(tenantId, jobId);
             temp.Seek(0, SeekOrigin.Begin);
-            await store.SaveAsync(key, temp, cancellationToken).ConfigureAwait(false);
+            string key = await store.SaveAsync(tenantId, jobId, temp, cancellationToken).ConfigureAwait(false);
 
             var rows = manifest.Files.ToDictionary(f => f.EntityType, f => f.Rows, StringComparer.Ordinal);
             var job = TransferJob.CreateImport(jobId, entityTypes, key, SafeFileName(command.FileName), size, sha,

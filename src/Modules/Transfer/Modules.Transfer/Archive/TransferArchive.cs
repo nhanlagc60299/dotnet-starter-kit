@@ -50,7 +50,7 @@ public sealed class TransferArchive : IDisposable
             try
             {
                 CheckEntries(zip, options);
-                var manifest = ReadManifest(zip);
+                var manifest = ReadManifest(zip, options);
                 VerifyFiles(zip, manifest, options);
                 return new TransferArchive(zip, manifest, options);
             }
@@ -176,7 +176,7 @@ public sealed class TransferArchive : IDisposable
     private static string Printable(string value) =>
         new(value.Take(80).Select(c => char.IsControl(c) ? '?' : c).ToArray());
 
-    private static TransferManifest ReadManifest(ZipArchive zip)
+    private static TransferManifest ReadManifest(ZipArchive zip, TransferOptions options)
     {
         var entry = zip.GetEntry(TransferFormat.ManifestPath)
             ?? throw Invalid("manifest.json is missing: this is not an fsh.transfer archive.");
@@ -227,6 +227,10 @@ public sealed class TransferArchive : IDisposable
 
             if (!seen.Add(file.EntityType)) throw Invalid($"Entity type \"{file.EntityType}\" is listed twice.");
             if (file.Rows < 0) throw Invalid($"File {file.Path} has a negative row count.");
+            if (file.Rows > options.MaxRowsPerFile)
+            {
+                throw Invalid($"File {file.Path} has more than {options.MaxRowsPerFile} rows.");
+            }
             if (file.Sha256 is not { Length: 64 } || !file.Sha256.All(char.IsAsciiHexDigit))
             {
                 throw Invalid($"File {file.Path} has no valid SHA-256.");
@@ -252,7 +256,9 @@ public sealed class TransferArchive : IDisposable
             int rows = 0;
             foreach (byte[] line in ReadLines(stream, file.Path, entry.Length, options.MaxLineBytes, budget, hash))
             {
-                ParseRow(line, file.Path, ++rows);
+                // Counted as read, so a manifest that understates its rows cannot slip past the cap.
+                if (++rows > options.MaxRowsPerFile) throw Invalid($"File {file.Path} has more than {options.MaxRowsPerFile} rows.");
+                ParseRow(line, file.Path, rows);
             }
 
             if (!string.Equals(Convert.ToHexStringLower(hash.GetHashAndReset()), file.Sha256, StringComparison.OrdinalIgnoreCase))

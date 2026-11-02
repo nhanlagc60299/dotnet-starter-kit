@@ -26,7 +26,7 @@ public sealed class TransferArchiveTests
                 ("catalog.brands", Rows(new JsonObject { ["name"] = "Acme", ["description"] = "Đồ gia dụng" }, new JsonObject { ["name"] = "Zeta" })),
                 ("catalog.empty", Rows()),
             ],
-            created, Defaults.MaxLineBytes);
+            created, Defaults);
 
         using var archive = TransferArchive.Open(stream, Defaults);
 
@@ -46,8 +46,18 @@ public sealed class TransferArchiveTests
     public async Task Write_Should_Throw_When_RowIsLongerThanLimit()
     {
         using var stream = new MemoryStream();
-        await Should.ThrowAsync<InvalidOperationException>(() => TransferArchiveWriter.WriteAsync(stream,
-            [("catalog.brands", Rows(new JsonObject { ["name"] = new string('a', 2000) }))], DateTime.UtcNow, maxLineBytes: 1024));
+        var ex = await Should.ThrowAsync<CustomException>(() => TransferArchiveWriter.WriteAsync(stream,
+            [("catalog.brands", Rows(new JsonObject { ["name"] = new string('a', 2000) }))], DateTime.UtcNow, new TransferOptions { MaxLineBytes = 1024 }));
+        ex.Message.ShouldContain("longer than 1024 bytes");
+    }
+
+    [Fact]
+    public async Task Write_Should_Throw_When_TooManyRows()
+    {
+        using var stream = new MemoryStream();
+        var ex = await Should.ThrowAsync<CustomException>(() => TransferArchiveWriter.WriteAsync(stream,
+            [("catalog.brands", Rows(new JsonObject(), new JsonObject(), new JsonObject()))], DateTime.UtcNow, new TransferOptions { MaxRowsPerFile = 2 }));
+        ex.Message.ShouldContain("more than 2 rows");
     }
 
     #endregion
@@ -140,6 +150,34 @@ public sealed class TransferArchiveTests
         ShouldBeInvalid(stream, Defaults, "Line 2");
     }
 
+    [Theory]
+    [InlineData(3)] // manifest is honest: refused before a line is read
+    [InlineData(1)] // manifest understates: refused by the counter while reading
+    public void Open_Should_Reject_When_RowsExceedMaxRowsPerFile(int manifestRows)
+    {
+        byte[] data = Encoding.UTF8.GetBytes("{}\n{}\n{}\n");
+        using var stream = Zip(
+            ("manifest.json", Manifest(("catalog.brands", manifestRows, Sha(data)))),
+            ("data/catalog.brands.ndjson", data));
+
+        ShouldBeInvalid(stream, new TransferOptions { MaxRowsPerFile = 2 }, "more than 2 rows");
+    }
+
+    [Fact]
+    public void Open_Should_Reject_When_EntryInflatesPastItsDeclaredSize()
+    {
+        // The headers claim 100 bytes, so the header sum passes the 2 KiB limit; the real 5,200 bytes do not. .NET's
+        // entry stream stops at the declared size, so the lie only yields a truncated file, which line/SHA validation
+        // rejects; ReadLines' own counter (inflated bytes vs declared size) is the second line of defence.
+        byte[] data = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("{\"name\":\"Acme\"}\n", 325)));
+        using var stream = Zip(
+            ("manifest.json", Manifest(("catalog.brands", 325, Sha(data)))),
+            ("data/catalog.brands.ndjson", data));
+        PatchUncompressedSize(stream, "data/catalog.brands.ndjson", 100);
+
+        ShouldBeInvalid(stream, new TransferOptions { MaxUncompressedBytes = 2048 }, "data/catalog.brands.ndjson");
+    }
+
     [Fact]
     public void Open_Should_Reject_When_RowCountDiffersFromManifest()
     {
@@ -221,6 +259,32 @@ public sealed class TransferArchiveTests
         var ex = Should.Throw<CustomException>(() => TransferArchive.Open(stream, options).Dispose());
         ex.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         ex.Message.ShouldContain(messagePart);
+    }
+
+    /// <summary>Overwrites the uncompressed size of <paramref name="name"/> in its local and central directory headers.</summary>
+    private static void PatchUncompressedSize(MemoryStream zip, string name, uint size)
+    {
+        byte[] bytes = zip.ToArray();
+        byte[] nameBytes = Encoding.UTF8.GetBytes(name);
+        int patched = 0;
+        for (int i = 0; i + 46 < bytes.Length; i++)
+        {
+            uint signature = BitConverter.ToUInt32(bytes, i);
+            (int sizeOffset, int nameOffset) = signature switch
+            {
+                0x04034b50 => (22, 30), // local file header
+                0x02014b50 => (24, 46), // central directory header
+                _ => (-1, -1),
+            };
+            if (sizeOffset < 0 || !bytes.AsSpan(i + nameOffset, nameBytes.Length).SequenceEqual(nameBytes)) continue;
+            BitConverter.GetBytes(size).CopyTo(bytes, i + sizeOffset);
+            patched++;
+        }
+
+        patched.ShouldBe(2);
+        zip.SetLength(0);
+        zip.Write(bytes);
+        zip.Position = 0;
     }
 
     private static string Sha(byte[] data) => Convert.ToHexStringLower(SHA256.HashData(data));
