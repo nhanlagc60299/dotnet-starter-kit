@@ -86,6 +86,22 @@ test("links only same-origin paths and http(s) URLs", async ({ page }) => {
   await expect(results.getByRole("link")).toHaveCount(2);
 });
 
+test("explains text with no searchable word instead of sending it", async ({ page }) => {
+  let calls = 0;
+  await page.route("**/api/v1/search?**", (route) => {
+    calls++;
+    return route.fulfill({ json: paged([]) });
+  });
+
+  await page.goto("/search");
+  await page.getByPlaceholder("Search titles and text…").fill("学校");
+  await expect(page.getByRole("heading", { name: "Nothing to search for" })).toBeVisible();
+  // Accented Vietnamese still folds to Latin letters and is sent.
+  await page.getByPlaceholder("Search titles and text…").fill("Đường");
+  await expect(page.getByRole("heading", { name: "No matches" })).toBeVisible();
+  expect(calls).toBe(1);
+});
+
 test("shows the API's validation message", async ({ page }) => {
   await mockProblemDetails(page, "**/api/v1/search?**", 400, {
     title: "Validation failed",

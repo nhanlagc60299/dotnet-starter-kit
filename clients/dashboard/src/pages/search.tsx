@@ -28,9 +28,13 @@ const PAGE_SIZE = 20;
 // Short on purpose: long enough to skip a request per keystroke, short enough
 // that results feel live. The spinner shows the pending state immediately.
 const DEBOUNCE_MS = 200;
-// The API rejects text with no letter or digit ("Search text must contain at
-// least one word"), so don't send it.
-const HAS_WORD = /[\p{L}\p{N}]/u;
+// The server folds text like TextNormalizer (lowercase, đ→d, strip accents) and
+// keeps only [a-z0-9]; text with nothing left is a 400, so don't send it.
+const fold = (s: string) =>
+  s.toLowerCase().replace(/đ/g, "d").normalize("NFD").replace(/\p{M}/gu, "");
+const HAS_WORD = (s: string) => /[a-z0-9]/.test(fold(s));
+// Letters exist but none survive the fold (e.g. Chinese, Cyrillic): explain, don't error.
+const HAS_ANY_LETTER = /[\p{L}\p{N}]/u;
 
 export function SearchPage() {
   const gate = useFeatureGate("Search");
@@ -64,7 +68,7 @@ function SearchBody() {
     return () => clearTimeout(t);
   }, [text]);
 
-  const canSearch = HAS_WORD.test(debounced);
+  const canSearch = HAS_WORD(debounced);
   const query = useQuery({
     queryKey: ["search", { q: debounced, entityType, pageNumber, pageSize: PAGE_SIZE }],
     queryFn: () =>
@@ -81,7 +85,7 @@ function SearchBody() {
   const data = canSearch ? query.data : undefined;
   const items = data?.items ?? [];
   // Typed but not yet sent, or sent and in flight: show it right away.
-  const pending = (text.trim() !== debounced && HAS_WORD.test(text)) || (canSearch && query.isFetching);
+  const pending = (text.trim() !== debounced && HAS_WORD(text)) || (canSearch && query.isFetching);
 
   // No endpoint lists the indexed types, so offer the ones on screen. While
   // filtered, keep the active type so it can be cleared.
@@ -133,6 +137,12 @@ function SearchBody() {
 
       {query.isError && canSearch ? (
         <ErrorBand message={describe(query.error)} />
+      ) : !canSearch && HAS_ANY_LETTER.test(debounced) ? (
+        <EntityEmpty
+          icon={SearchX}
+          title="Nothing to search for"
+          body="Search matches Latin letters and digits (accents are optional), so this text has no searchable word."
+        />
       ) : !canSearch ? (
         <EntityEmpty
           icon={Search}
@@ -140,7 +150,8 @@ function SearchBody() {
           body={
             <>
               Words must all match. Use <Kbd>"exact phrase"</Kbd>, <Kbd>-exclude</Kbd> or{" "}
-              <Kbd>or</Kbd>; the last word also matches as a prefix.
+              <Kbd>or</Kbd>; the last word also matches as a prefix. Only records a module has
+              indexed are found, and no module feeds the index yet, so it starts empty.
             </>
           }
         />
@@ -150,7 +161,7 @@ function SearchBody() {
         <EntityEmpty
           icon={SearchX}
           title="No matches"
-          body={`Nothing indexed matches “${debounced}”${entityType ? ` in ${entityType}` : ""}.`}
+          body={`Nothing indexed matches “${debounced}”${entityType ? ` in ${entityType}` : ""}. The index only holds what modules send to it.`}
         />
       ) : (
         <div>
