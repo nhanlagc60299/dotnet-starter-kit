@@ -8,7 +8,7 @@ set -eu
 
 mkdir -p "$TMPDIR"
 work=$(mktemp -d "$TMPDIR/backup.XXXXXX")
-trap 'rm -rf "$work"' EXIT
+trap 'rc=$?; rm -rf "$work"; [ "$rc" -eq 0 ] || echo "backup: FAILED (exit $rc)" >&2' EXIT
 
 name="fsh-$(date -u +%Y%m%dT%H%M%SZ).dump"
 echo "backup: dumping ${PGDATABASE:-} as ${PGUSER:-} to $name"

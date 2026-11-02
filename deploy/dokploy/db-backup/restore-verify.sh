@@ -8,18 +8,34 @@ set -eu
 
 mkdir -p "$TMPDIR"
 work=$(mktemp -d "$TMPDIR/verify.XXXXXX")
+reported=
 cleanup() {
+    rc=$?
     pg_ctl -D "$work/pgdata" -m immediate stop > /dev/null 2>&1 || true
     rm -rf "$work"
+    # An unexpected failure (set -e) still gets a FAILED line.
+    [ "$rc" -eq 0 ] || [ -n "$reported" ] || echo "restore-verify: FAILED (exit $rc)" >&2
 }
 trap cleanup EXIT
-fail() { echo "restore-verify: FAILED: $*" >&2; exit 1; }
+fail() { reported=1; echo "restore-verify: FAILED: $*" >&2; exit 1; }
 
 # The .sha256 is uploaded last, so listing it finds only complete backups. UTC timestamps sort.
-latest=$(rclone lsf "$REMOTE" --include 'fsh-*.dump.sha256' | sort | tail -n 1)
+# (captured first: sh has no pipefail, a failed listing must not look like "no backups")
+listing=$(rclone lsf "$REMOTE" --include 'fsh-*.dump.sha256') || fail "cannot list $REMOTE"
+latest=$(printf '%s\n' "$listing" | sort | tail -n 1)
 [ -n "$latest" ] || fail "no backup found under $REMOTE"
 dump=${latest%.sha256}
-echo "restore-verify: newest backup is $dump"
+
+# A restore test of a stale backup proves nothing about today: if the daily backups have been
+# failing silently, the newest dump is old and this must fail too.
+max_age=${RESTORE_VERIFY_MAX_AGE_HOURS:-72}
+case $max_age in ''|*[!0-9]*) fail "RESTORE_VERIFY_MAX_AGE_HOURS must be a whole number, got '$max_age'" ;; esac
+iso=$(printf '%s' "$dump" | sed -En 's/^fsh-([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})Z\.dump$/\1-\2-\3 \4:\5:\6/p')
+[ -n "$iso" ] || fail "cannot read a UTC timestamp from the name '$dump'"
+made=$(date -u -d "$iso" +%s) || fail "cannot parse timestamp '$iso' of $dump"
+age=$(( ($(date -u +%s) - made) / 3600 ))
+echo "restore-verify: newest backup is $dump ($age h old, limit $max_age h)"
+[ "$age" -le "$max_age" ] || fail "newest backup $dump is $age h old (limit $max_age h): daily backups are not landing"
 
 rclone copyto "$REMOTE/$dump" "$work/$dump"
 rclone copyto "$REMOTE/$latest" "$work/$latest"

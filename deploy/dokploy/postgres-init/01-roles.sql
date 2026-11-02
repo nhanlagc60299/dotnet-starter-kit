@@ -83,6 +83,8 @@ GRANT SELECT ON ALL SEQUENCES IN SCHEMA hangfire TO app_readonly;
 
 -- EF keeps one shared __EFMigrationsHistory in `public`; the API's readiness check reads it.
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO app_runtime, app_readonly;
+-- Sequences in `public` too (pg_dump reads every sequence).
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO app_readonly;
 
 -- Audit is append-only for the runtime role: insert and read, never change or remove.
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA audit TO app_runtime;
@@ -109,6 +111,7 @@ FROM pg_temp._module_schemas \gexec
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA audit GRANT SELECT, INSERT ON TABLES TO app_runtime;
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA audit REVOKE UPDATE, DELETE, TRUNCATE ON TABLES FROM app_runtime;
 ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA public GRANT SELECT ON TABLES TO app_runtime, app_readonly;
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrate IN SCHEMA public GRANT SELECT ON SEQUENCES TO app_readonly;
 
 -- Hangfire tables are created by app_runtime.
 ALTER DEFAULT PRIVILEGES FOR ROLE app_runtime IN SCHEMA hangfire GRANT SELECT ON TABLES TO app_readonly;

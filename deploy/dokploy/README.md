@@ -78,7 +78,7 @@ Service `backup` luôn bật (backup là bắt buộc) và **fail closed**: thi�
 | Việc | Lịch mặc định | Biến | Làm gì |
 |---|---|---|---|
 | `backup.sh` | `0 2 * * *` (02:00 hằng ngày) | `BACKUP_CRON` | `pg_dump -Fc` bằng `app_readonly` → `fsh-<UTC>.dump` → `rclone copyto` lên `<bucket>/<BACKUP_S3_PREFIX>/`, rồi file `.sha256`. File `.sha256` được tải lên **sau cùng**: có nó nghĩa là bản backup đầy đủ. Xoá file tạm local khi xong. |
-| `restore-verify.sh` | `0 4 1 * *` (04:00 ngày 1 hằng tháng) | `RESTORE_VERIFY_CRON` | Tải bản mới nhất, kiểm sha256, `initdb` một cluster tạm *trong container* (chỉ unix socket, không đụng DB prod), `pg_restore`, in số bảng theo schema, số dòng `identity."Users"`, kiểm có tenant `root`. Thoát ≠ 0 nếu bất kỳ bước nào hỏng. Dọn cluster tạm. |
+| `restore-verify.sh` | `0 4 1 * *` (04:00 ngày 1 hằng tháng) | `RESTORE_VERIFY_CRON` | Tải bản mới nhất, kiểm sha256, `initdb` một cluster tạm *trong container* (chỉ unix socket, không đụng DB prod), `pg_restore`, in số bảng theo schema, số dòng `identity."Users"`, kiểm có tenant `root`. Thoát ≠ 0 nếu bất kỳ bước nào hỏng, **kể cả khi bản mới nhất cũ hơn `RESTORE_VERIFY_MAX_AGE_HOURS` (mặc định 72 giờ)**: backup hằng ngày hỏng âm thầm thì verify cũng phải đỏ. Dọn cluster tạm. |
 
 Script **không bao giờ xoá** gì trên remote (chỉ `rclone copyto`). Thời hạn lưu giữ là việc của bucket (xem dưới), cũng là cách để nguyên tắc "không xoá cứng tự động" không bị phá bởi chính backup.
 
@@ -116,16 +116,38 @@ Dựa vào việc dump giữ nguyên owner và quyền của `app_migrate` / `ap
    rclone copyto "$REMOTE/fsh-20261101T020000Z.dump.sha256" dump.sha256
    sed -i 's/ .*/  dump/' dump.sha256 && sha256sum -c dump.sha256   # phải in "dump: OK"
    ```
-3. Tạo lại database và nạp dump bằng superuser `fsh` (dán `POSTGRES_PASSWORD` tại chỗ, đừng lưu vào đâu):
+3. **Giữ lại database hiện tại** (không bao giờ `DROP` trước khi bản restore được chứng minh). Bằng superuser `fsh` (dán `POSTGRES_PASSWORD` tại chỗ, đừng lưu vào đâu): dump lần nữa làm lưới an toàn thứ hai, rồi *đổi tên* DB cũ và tạo `fsh` mới rỗng:
    ```bash
    export PGHOST=postgres PGUSER=fsh PGPASSWORD='<POSTGRES_PASSWORD>'
-   psql -d postgres -c 'DROP DATABASE fsh WITH (FORCE)' -c 'CREATE DATABASE fsh OWNER app_migrate'
-   pg_restore --exit-on-error -d fsh dump
-   rm dump dump.sha256
+   old=fsh_before_restore_$(date -u +%Y%m%d)
+   pg_dump -Fc -f before-restore.dump fsh && rclone copyto before-restore.dump "$REMOTE/before-restore-$(date -u +%Y%m%dT%H%M%SZ).dump"
+   #  ^ nếu DB hỏng nặng đến mức dump lỗi thì vẫn đi tiếp: bước đổi tên bên dưới giữ nguyên dữ liệu.
+   psql -d postgres -v old="$old" <<'SQL'
+   SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'fsh' AND pid <> pg_backend_pid();
+   ALTER DATABASE fsh RENAME TO :"old";
+   CREATE DATABASE fsh OWNER app_migrate;
+   SQL
    ```
-4. **Redeploy**: `db-roles` → `migrator` (no-op, lịch sử migration đã nằm trong dump) → `db-grants` đặt lại quyền cấp database và mật khẩu role, rồi `api` lên. Kiểm `https://api.example.com/health/ready` và đăng nhập.
+   (`ALTER ... RENAME` lỗi "being accessed by other users" nghĩa là còn kết nối: chắc chắn `api` đã dừng rồi chạy lại.)
+4. **Nạp dump vào `fsh` mới**:
+   ```bash
+   pg_restore --exit-on-error -d fsh dump
+   ```
+   Nếu lệnh này lỗi thì DB cũ vẫn nguyên: bỏ DB mới còn dở và đổi tên DB cũ về lại, rồi điều tra (thử bản backup khác):
+   ```bash
+   psql -d postgres -v old="$old" <<'SQL'
+   DROP DATABASE fsh;
+   ALTER DATABASE :"old" RENAME TO fsh;
+   SQL
+   ```
+5. **Kiểm tra trước khi cho `api` chạy lại**: so sánh với DB cũ, rồi **Redeploy** để `db-roles` → `migrator` (no-op, lịch sử migration đã nằm trong dump) → `db-grants` đặt lại quyền cấp database, mật khẩu role và quyền trên schema, rồi `api` lên:
+   ```bash
+   for d in fsh "$old"; do psql -d "$d" -Atc "SELECT '$d', (SELECT count(*) FROM identity.\"Users\"), (SELECT count(*) FROM tenant.\"Tenants\")"; done
+   ```
+   Sau redeploy kiểm `https://api.example.com/health/ready` và đăng nhập.
+6. Dọn file trong volume: `rm -f dump dump.sha256 before-restore.dump`. DB `fsh_before_restore_<ngày>` **vẫn nằm trong Postgres**, chiếm đĩa. Hệ thống không bao giờ tự xoá nó; chỉ khi đã chạy ổn đủ lâu bạn mới xoá tay (`DROP DATABASE fsh_before_restore_<ngày>`), hoặc giữ nó để so sánh dữ liệu.
 
-Muốn thử mà không đụng prod: `restore-verify.sh` làm đúng việc này trong cluster tạm. Bản dump cũ hơn schema hiện tại vẫn restore được; `migrator` sẽ áp các migration còn thiếu ở bước 4.
+Muốn thử mà không đụng prod: `restore-verify.sh` làm đúng phần nạp dump này trong cluster tạm. Bản dump cũ hơn schema hiện tại vẫn restore được; `migrator` sẽ áp các migration còn thiếu ở bước 4.
 
 ### Giám sát bằng Uptime Kuma (tuỳ chọn)
 
