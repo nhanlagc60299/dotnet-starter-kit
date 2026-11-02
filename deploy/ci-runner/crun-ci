@@ -1,0 +1,17 @@
+#!/bin/sh
+# crun wrapper for the nested engine. The runner container inherits oom_score_adj=200 from the
+# rootless host engine and is not allowed to lower it, but Docker API clients always send
+# OomScoreAdj=0, so crun would fail every container start. Drop the setting from the OCI spec
+# (containers keep the inherited 200) and hand over to crun.
+prev=
+for a in "$@"; do
+  case "$prev" in
+    --bundle|-b) f="$a/config.json"; filter='del(.process.oomScoreAdj)' ;;
+    --process|-p) f="$a"; filter='del(.oomScoreAdj)' ;;
+  esac
+  prev="$a"
+done
+if [ -n "${f:-}" ] && [ -f "$f" ]; then
+  jq "$filter" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+fi
+exec crun "$@"

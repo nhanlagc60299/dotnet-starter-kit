@@ -137,7 +137,7 @@ jobs:
           IMAGE: fsh-${{ matrix.app }}:ci
         run: |
           set -euo pipefail
-          docker run -d --name smoke -p 8080:80 \
+          docker run -d --name fsh-ci-smoke-${{ matrix.app }} -p 8080:80 \
             -e FSH_API_URL=http://api.example.test -e FSH_DEFAULT_TENANT=acme \
             -e FSH_DASHBOARD_URL=http://app.example.test "$IMAGE"
           check() {
@@ -146,7 +146,7 @@ jobs:
               curl -fsS http://localhost:8080/config.json -o config.json && break
               sleep 1
             done
-            [ "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' smoke)" = "true 0" ]
+            [ "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' fsh-ci-smoke-${{ matrix.app }})" = "true 0" ]
             jq -e '.apiBase == "http://api.example.test" and .defaultTenant == "acme"' config.json
           }
           check
@@ -154,18 +154,18 @@ jobs:
             echo "::error::config.json.template is served from the web root"
             exit 1
           fi
-          docker restart smoke
+          docker restart fsh-ci-smoke-${{ matrix.app }}
           check
 
       - name: Container logs
         if: failure()
-        run: docker logs smoke
+        run: docker logs fsh-ci-smoke-${{ matrix.app }}
 
-      # The runner is persistent: a leftover `smoke` container would break the next run.
+      # The runner is persistent: a leftover smoke container would break the next run.
       - name: Remove smoke container and image
         if: always()
         run: |
-          docker rm -f smoke || true
+          docker rm -f fsh-ci-smoke-${{ matrix.app }} || true
           docker rmi -f fsh-${{ matrix.app }}:ci || true
 
   # Single required status check — see backend.yml for the rationale.

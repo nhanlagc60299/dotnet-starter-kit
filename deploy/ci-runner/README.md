@@ -1,24 +1,32 @@
 # Self-hosted CI runner (podman)
 
-All GitHub Actions workflows in this repo run on `runs-on: [self-hosted, linux, podman]`, served by
-the official runner image (`ghcr.io/actions/actions-runner`) in a podman container. On macOS that
-container lives in the podman machine VM (Linux, ARM64 on Apple silicon).
+All GitHub Actions workflows in this repo run on `runs-on: [self-hosted, linux, podman]`. The
+runner is a podman container built from `Dockerfile` here: the official
+`ghcr.io/actions/actions-runner` image plus **its own podman engine**. On macOS it lives in the
+podman machine VM (Linux, ARM64 on Apple silicon).
 
 ```
-GitHub ──job──> runner container ──/var/run/docker.sock──> podman (the VM) ──> sibling containers
-                (docker CLI)                                                  (services:, Testcontainers,
-                                                                               docker build/run)
+GitHub ──job──> runner container (--privileged, rootless in the VM)
+                ├─ runner (user `runner`) ── docker CLI ──> /var/run/docker.sock
+                └─ nested podman engine (root of this container) ──> job containers
+                   storage: volume <name>-storage          (services:, container:, Testcontainers,
+                                                             docker build/run, PublishContainer)
 ```
 
-- **docker CLI → podman.** The VM's podman API socket is mounted at `/var/run/docker.sock`
-  (`DOCKER_HOST`), so `services:`, `container:` jobs, Testcontainers, `docker build` and
-  `dotnet publish /t:PublishContainer` all start containers next to the runner.
-- **Host network.** Ports those containers publish land on the VM; the runner shares the VM's
-  network, so `localhost:5432` in a step reaches the service container.
-- **One volume per runner** (`podman-runner-1`) holds the runner install, its credentials and the
-  `_work` dir. It is mounted at its own VM path so `container:` jobs, which bind-mount the work dir
-  by host path, see the same files.
-- `--restart=always`: podman restarts the runner if it dies.
+- **Nested engine, not the host's.** The entrypoint starts `podman system service` inside the
+  runner container and exposes it at `/var/run/docker.sock` (`DOCKER_HOST`). Jobs see only the
+  containers they start themselves; the VM's own podman, its containers and its socket are out of
+  reach.
+- **Only named volumes are mounted:** `<name>` → `/home/runner` (runner install, credentials,
+  `_work`, .NET SDK, NuGet/npm/Playwright caches) and `<name>-storage` → `/var/lib/containers`
+  (the nested engine's images and containers). No host path is bind-mounted.
+- Published ports land in the runner container's own network namespace, so `localhost:5432` in a
+  step reaches a service container, as on GitHub-hosted runners.
+- Nested-engine quirks the image handles (see `containers.conf`, `crun-ci`, `entrypoint.sh`):
+  its own subnets (the VM's engine uses 10.88/10.89), `route_localnet` for localhost port
+  forwarding, a crun wrapper that drops `oomScoreAdj` (the container may not lower the 200 it
+  inherits), and a 2-second healthcheck loop because there is no systemd to schedule them.
+- `--restart=always`: podman restarts the runner (and its engine) if either dies.
 - Labels: `self-hosted`, `Linux`, `ARM64` (or `X64`) are added by GitHub; the script adds `podman`.
 
 ## Install
@@ -29,12 +37,13 @@ Needs podman (machine running on macOS) and `gh` logged in as a repo admin.
 deploy/ci-runner/register.sh
 ```
 
-It asks GitHub for a short-lived registration token (`gh api -X POST
-repos/<repo>/actions/runners/registration-token`), registers the runner on first use, then starts
-it. The token goes from `gh` straight into `config.sh` over a pipe: it is never put in an env var,
-a file, a log or the repo. Re-running the script just restarts the runner.
+It builds `localhost/fsh-ci-runner:<version>`, asks GitHub for a short-lived registration token
+(`gh api -X POST repos/<repo>/actions/runners/registration-token`), registers the runner on first
+use and starts it. The token travels from `gh` through a pipe into `config.sh`'s environment
+(`ACTIONS_RUNNER_INPUT_TOKEN`) — never argv, a file, a log or the repo; the runner masks it as
+`***` in its own logs. Re-running the script rebuilds the image and restarts the runner.
 
-Overrides: `REPO=owner/name`, `RUNNER_NAME=podman-runner-2`, `RUNNER_IMAGE=ghcr.io/actions/actions-runner:<ver>`.
+Overrides: `REPO=owner/name`, `RUNNER_NAME=podman-runner-2`.
 
 **Survive a VM reboot** (`podman machine stop/start`): `--restart=always` only covers crashes. Once:
 
@@ -51,39 +60,60 @@ podman machine ssh systemctl --user enable podman-restart.service
 | Status on GitHub | `gh api repos/nhanlagc60299/dotnet-starter-kit/actions/runners` |
 | Logs | `podman logs -f podman-runner-1` |
 | Stop / start | `podman stop podman-runner-1` / `deploy/ci-runner/register.sh` |
-| Remove (`config.sh remove` + delete container and volume) | `deploy/ci-runner/register.sh remove` |
-| Free disk | `podman image prune -f` (the frontend image builds leave an untagged ~0.5 GB node stage when sources change; the workflows delete only their own tags) |
+| Remove (`config.sh remove` + delete container and both volumes) | `deploy/ci-runner/register.sh remove` |
+| What the nested engine holds | `podman exec podman-runner-1 podman system df` |
+| Free disk (only the runner's own engine) | `podman exec podman-runner-1 podman system prune -af` |
 
-**Disk budget.** Expect ~6 GB for one runner: the image (~1.5 GB), its volume (`_work` + .NET SDK,
-~1 GB) and the container's own layer (~4 GB of NuGet/npm/Playwright caches and apt packages;
-`register.sh` recreating the container resets it). Check with `podman machine ssh df -h /var`.
+**Disk budget.** Expect ~10 GB for one runner: the image (~2 GB), the home volume (.NET SDK,
+NuGet/npm/Playwright caches, `_work`; ~4 GB) and the nested storage volume (postgres, node,
+nginx, Testcontainers and built images; ~3–4 GB). The nested engine does not share images with
+the VM's engine, so everything is pulled once more. Check with `podman machine ssh df -h /var`.
 
-**Upgrade.** The runner updates itself in its volume when GitHub ships a new version (GitHub
-refuses runners that fall too far behind). To move to a new image (newer docker CLI, OS
-packages): `register.sh remove`, bump `RUNNER_IMAGE` in `register.sh`, run `register.sh` again.
+**Upgrade.** The runner updates itself inside its home volume when GitHub ships a new version
+(GitHub refuses runners that fall too far behind). For a new base image: bump the `FROM` tag in
+`Dockerfile` and `IMAGE` in `register.sh`, then `register.sh remove` and `register.sh` (the home
+volume is filled from the image only when it is empty).
 
 **Parallel runners.** One runner runs one job at a time, so a workflow's jobs queue up. For more
-throughput run `RUNNER_NAME=podman-runner-2 deploy/ci-runner/register.sh` (each gets its own
-volume). Caveat: all runners share the VM's network and container names, and the
-`DbMigrator Container Smoke` job (service on port 5432) and the frontend `Container` jobs (port
-8080, container name `smoke`) assume they are alone — two of those at once on the same VM
-collide. Keep it to one runner unless the VM has spare CPU/RAM and you accept the odd retry; 4
-CPU / 8 GiB fits one comfortably.
+throughput run `RUNNER_NAME=podman-runner-2 deploy/ci-runner/register.sh`. Each runner has its own
+engine and network namespace, so ports and container names don't collide; the limit is the VM's
+CPU/RAM/disk (4 CPU / 8 GiB fits one comfortably, two at a squeeze).
 
 ## Security (public repo)
 
-A self-hosted runner executes whatever the workflow tells it to, on this machine, with access to
-the podman socket (i.e. any container on the VM). Code from strangers must never get there.
+A self-hosted runner executes whatever a workflow tells it to — including any npm or NuGet
+package a same-repo PR pulls in.
 
-1. **Guard in every workflow.** Each job that a `pull_request` can start only runs when
+**Why the engine is nested.** The first version mounted the VM's podman socket into the runner.
+That gave every job full control of the VM's podman, and podman machine mounts the Mac's
+`/Users`, `/private` and `/var/folders` read-write into the VM. One `docker run -v /Users:/u ...`
+from any job — or from a malicious dependency in its install step — could read and write
+`~/.ssh`, `~/.config/gh`, shell rc files and every other project on the Mac, and could start,
+stop or inspect the VM's other containers. Now jobs talk to an engine that runs inside the runner
+container: `-v /Users:/u` mounts an empty directory, `docker ps` lists only the job's own
+containers, and no host path or host socket is mounted anywhere.
+
+**Fork pull requests never run here.**
+1. Each job a `pull_request` can start only runs when
    `github.event.pull_request.head.repo.full_name == github.repository` (the `changes` job, which
-   everything else `needs`, plus CodeQL and template smoke jobs). For a fork PR the required
-   `Backend CI` / `Frontend CI` gate runs on a GitHub-hosted VM, checks nothing out and **fails**,
-   so a fork PR can't be merged green without review.
-2. **Turn on approval — required, the guard alone is not enough.** A fork PR can edit the
-   workflow files themselves and delete the guard. Only GitHub stops that: **Settings → Actions →
-   General → "Fork pull request workflows from outside collaborators" → "Require approval for all
-   external contributors"**. Before approving a run, read any change under `.github/`.
-3. To test a contributor's change: review it, push it to a branch of this repo, open a PR from
-   there.
+   everything else `needs`, plus CodeQL and template smoke). For a fork PR the `Backend CI` /
+   `Frontend CI` gate runs on a GitHub-hosted VM, checks nothing out and **fails**, so a fork PR
+   can't be merged green — once Backend CI / Frontend CI are required status checks (`main` has
+   no branch protection yet).
+2. A fork PR could edit the workflow and drop that guard, so the repo setting is the real gate:
+   **Settings → Actions → General → "Require approval for all external contributors"** (enabled).
+   Read any change under `.github/` before approving a run.
+3. To test a contributor's change: review it, push it to a branch of this repo, open a PR from there.
 4. Never use `pull_request_target` with a checkout of the PR head on this runner.
+
+**What remains.**
+- The runner container is `--privileged` (needed for the nested engine). It is still a rootless
+  container of the VM user, with no host paths, but a kernel or container-runtime escape from it
+  lands as that VM user — who owns the VM's podman and the `/Users` mount. Keep the VM patched
+  (`podman machine` updates) and don't run other sensitive work in the same VM if that matters.
+- The runner is **persistent**: a bad job can leave files in the home volume or images in the
+  nested engine that later jobs — including `main`/tag jobs with `NUGET_API_KEY` and a
+  `packages: write` token — then pick up. `actions/checkout` cleans the workspace, but not
+  `~/.nuget`, `~/.npm` or the engine. Future hardening: register with `--ephemeral` and have
+  `register.sh` recreate both volumes after every job (one job per runner lifetime), and keep the
+  publish jobs on a separate runner or on GitHub-hosted VMs.

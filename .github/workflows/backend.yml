@@ -25,7 +25,6 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
 
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
@@ -295,6 +294,9 @@ jobs:
 
   publish-dev-containers:
     name: Publish Dev Containers
+    permissions:
+      contents: read
+      packages: write # GHCR push
     needs: [changes, test, integration-test]
     if: needs.changes.outputs.backend == 'true' && github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: [self-hosted, linux, podman]
@@ -341,6 +343,9 @@ jobs:
 
   publish-release:
     name: Publish Release (NuGet + Containers)
+    permissions:
+      contents: read
+      packages: write # GHCR push
     needs: [changes, test, integration-test]
     if: |
       (github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch') ||
