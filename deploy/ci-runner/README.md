@@ -25,7 +25,8 @@ GitHub ──job──> runner container (--privileged, rootless in the VM)
 - Nested-engine quirks the image handles (see `containers.conf`, `crun-ci`, `entrypoint.sh`):
   its own subnets (the VM's engine uses 10.88/10.89), `route_localnet` for localhost port
   forwarding, a crun wrapper that drops `oomScoreAdj` (the container may not lower the 200 it
-  inherits), and a 2-second healthcheck loop because there is no systemd to schedule them.
+  inherits), `nofile=65536` (build steps default to 1024, which breaks Vite builds at random),
+  and a 2-second healthcheck loop because there is no systemd to schedule them.
 - `--restart=always`: podman restarts the runner (and its engine) if either dies.
 - Labels: `self-hosted`, `Linux`, `ARM64` (or `X64`) are added by GitHub; the script adds `podman`.
 

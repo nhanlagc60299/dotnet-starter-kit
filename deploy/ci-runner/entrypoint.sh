@@ -25,5 +25,7 @@ done &
 cd /home/runner
 setpriv --reuid=runner --regid=runner --init-groups env HOME=/home/runner USER=runner "$@" &
 
-trap 'kill -TERM $(jobs -p) 2>/dev/null' TERM INT
+# On stop, let the runner delete its GitHub session; a killed runner leaves one behind and the next
+# start gets "A session for this runner already exists" until it expires.
+trap 'kill -TERM $(jobs -p) 2>/dev/null; wait; exit 0' TERM INT
 wait -n

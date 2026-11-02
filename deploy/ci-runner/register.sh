@@ -29,6 +29,7 @@ config() { # $1 = token endpoint (registration-token | remove-token), rest = con
 podman build -q -t "$IMAGE" "$(dirname "$0")" >/dev/null
 
 if [[ "${1:-}" == "remove" ]]; then
+  podman stop -t 60 "$NAME" >/dev/null 2>&1 || true # graceful: the runner deletes its session
   podman rm -f "$NAME" >/dev/null 2>&1 || true
   config remove-token remove
   podman volume rm "$NAME" "$NAME-storage" >/dev/null
@@ -42,6 +43,7 @@ if ! podman run --rm --user runner --entrypoint test -w /home/runner "${VOLS[@]}
     --name "$NAME" --labels podman --work _work
 fi
 
+podman stop -t 60 "$NAME" >/dev/null 2>&1 || true # graceful: the runner deletes its session
 podman rm -f "$NAME" >/dev/null 2>&1 || true
 # --privileged lets the nested engine run containers. It stays inside this VM user's rootless
 # user namespace and gets no host paths and no host socket.
