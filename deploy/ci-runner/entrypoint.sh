@@ -24,8 +24,18 @@ done &
 
 cd /home/runner
 setpriv --reuid=runner --regid=runner --init-groups env HOME=/home/runner USER=runner "$@" &
+runner=$!
 
-# On stop, let the runner delete its GitHub session; a killed runner leaves one behind and the next
-# start gets "A session for this runner already exists" until it expires.
-trap 'kill -TERM $(jobs -p) 2>/dev/null; wait; exit 0' TERM INT
+# On stop, let the runner delete its GitHub session first; a killed runner leaves one behind and
+# the next start gets "A session for this runner already exists" for minutes. run.sh forwards the
+# signal to run-helper.sh, which ignores it while the listener runs, so signal the listener itself
+# (TERM: as a background job it ignores INT).
+stop() {
+  pkill -TERM -f bin/Runner.Listener || true
+  wait "$runner" || true
+  kill -TERM $(jobs -p) 2>/dev/null || true
+  wait
+  exit 0
+}
+trap stop TERM INT
 wait -n
