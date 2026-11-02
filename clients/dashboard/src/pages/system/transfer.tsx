@@ -47,6 +47,8 @@ import { cn } from "@/lib/cn";
 import { describe } from "@/lib/list-helpers";
 
 const POLL_MS = 1_000;
+// The limit is binary (MiB); formatBytes would label it "MB".
+const mib = (bytes: number) => `${Number((bytes / 1024 / 1024).toFixed(1))} MiB`;
 
 const STATUS_TONE: Record<TransferJobStatus, EntityStatusTone> = {
   Pending: "default",
@@ -291,7 +293,7 @@ function ImportPanel({ types }: { types: TransferEntityTypeDto[] }) {
                   {upload.isPending ? "Checking archive…" : "Choose a .zip archive"}
                 </span>
                 <span className="text-[11.5px] text-[var(--color-muted-foreground)]">
-                  Up to {formatBytes(MAX_UPLOAD_BYTES)} ·{" "}
+                  Up to {mib(MAX_UPLOAD_BYTES)} ·{" "}
                   {types.length > 0
                     ? `importable here: ${types.map((t) => t.entityType).join(", ")}`
                     : "no type is importable for you right now."}
@@ -309,7 +311,7 @@ function ImportPanel({ types }: { types: TransferEntityTypeDto[] }) {
                     if (file.size > MAX_UPLOAD_BYTES) {
                       upload.reset();
                       setTooBig(
-                        `${file.name} is ${formatBytes(file.size)}; the limit is ${formatBytes(MAX_UPLOAD_BYTES)}.`,
+                        `${file.name} is ${mib(file.size)}; the limit is ${mib(MAX_UPLOAD_BYTES)}.`,
                       );
                       return;
                     }

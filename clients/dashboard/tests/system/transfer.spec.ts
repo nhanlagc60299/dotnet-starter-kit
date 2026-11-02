@@ -179,7 +179,7 @@ test("refuses an archive over the upload limit without sending it", async ({ pag
   });
 
   await page.goto("/system/transfer");
-  await expect(page.getByText(/Up to 200\.0 MB/)).toBeVisible();
+  await expect(page.getByText(/Up to 200 MiB/)).toBeVisible();
   // Playwright caps setInputFiles buffers at 50 MB, so fake the size on a tiny File.
   await page.getByLabel("Archive to import").evaluate((input: HTMLInputElement) => {
     const file = new File(["PK"], "huge.zip", { type: "application/zip" });
@@ -187,6 +187,6 @@ test("refuses an archive over the upload limit without sending it", async ({ pag
     Object.defineProperty(input, "files", { value: [file], configurable: true });
     input.dispatchEvent(new Event("change", { bubbles: true }));
   });
-  await expect(page.getByText("huge.zip is 300.0 MB; the limit is 200.0 MB.")).toBeVisible();
+  await expect(page.getByText("huge.zip is 300 MiB; the limit is 200 MiB.")).toBeVisible();
   expect(uploads).toBe(0);
 });
