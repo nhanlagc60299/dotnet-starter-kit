@@ -20,10 +20,12 @@ concurrency:
 permissions:
   contents: read
 
+# Self-hosted runner + public repo: fork PRs never reach it — see the note in backend.yml.
 jobs:
   changes:
     name: Detect changes
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, podman]
     outputs:
       frontend: ${{ github.event_name != 'pull_request' || steps.filter.outputs.frontend == 'true' }}
     steps:
@@ -40,7 +42,7 @@ jobs:
     name: Lint & Build (${{ matrix.app }})
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, podman]
     strategy:
       fail-fast: false
       matrix:
@@ -73,7 +75,7 @@ jobs:
     name: E2E (${{ matrix.app }})
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, podman]
     strategy:
       fail-fast: false
       matrix:
@@ -118,7 +120,7 @@ jobs:
     name: Container (${{ matrix.app }})
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, podman]
     strategy:
       fail-fast: false
       matrix:
@@ -135,7 +137,7 @@ jobs:
           IMAGE: fsh-${{ matrix.app }}:ci
         run: |
           set -euo pipefail
-          docker run -d --name smoke -p 8080:80 \
+          docker run -d --name fsh-ci-smoke-${{ matrix.app }} -p 8080:80 \
             -e FSH_API_URL=http://api.example.test -e FSH_DEFAULT_TENANT=acme \
             -e FSH_DASHBOARD_URL=http://app.example.test "$IMAGE"
           check() {
@@ -144,7 +146,7 @@ jobs:
               curl -fsS http://localhost:8080/config.json -o config.json && break
               sleep 1
             done
-            [ "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' smoke)" = "true 0" ]
+            [ "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' fsh-ci-smoke-${{ matrix.app }})" = "true 0" ]
             jq -e '.apiBase == "http://api.example.test" and .defaultTenant == "acme"' config.json
           }
           check
@@ -152,20 +154,32 @@ jobs:
             echo "::error::config.json.template is served from the web root"
             exit 1
           fi
-          docker restart smoke
+          docker restart fsh-ci-smoke-${{ matrix.app }}
           check
 
       - name: Container logs
         if: failure()
-        run: docker logs smoke
+        run: docker logs fsh-ci-smoke-${{ matrix.app }}
+
+      # The runner is persistent: a leftover smoke container would break the next run.
+      - name: Remove smoke container and image
+        if: always()
+        run: |
+          docker rm -f fsh-ci-smoke-${{ matrix.app }} || true
+          docker rmi -f fsh-${{ matrix.app }}:ci || true
 
   # Single required status check — see backend.yml for the rationale.
   frontend-ci:
     name: Frontend CI
     needs: [changes, lint-build, e2e, container]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted","linux","podman"]') }}
     steps:
+      - name: Refuse fork pull request
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo "::error::CI never runs fork PRs (self-hosted runner). A maintainer must review the change and push it to a branch of this repo."
+          exit 1
       - name: Fail if a required frontend job failed
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: |

@@ -35,10 +35,12 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   DOTNET_NOLOGO: true
 
+# Self-hosted runner + public repo: never for fork PRs (see backend.yml).
 jobs:
   scaffold-full:
     name: Scaffold (Aspire + React) and build
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, podman]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -66,7 +68,7 @@ jobs:
         run: dotnet pack templates/FullStackHero.NET.StarterKit.csproj -c Release -o "$RUNNER_TEMP/pkg"
 
       - name: Install template
-        run: dotnet new install "$RUNNER_TEMP"/pkg/FullStackHero.NET.StarterKit.*.nupkg
+        run: dotnet new install "$RUNNER_TEMP"/pkg/FullStackHero.NET.StarterKit.*.nupkg --force
 
       - name: Scaffold project
         run: dotnet new fsh -n Smoke.App -o "$RUNNER_TEMP/smoke" --aspire true --frontend true --skipRestore true
@@ -87,7 +89,8 @@ jobs:
 
   scaffold-minimal:
     name: Scaffold (no Aspire, no React) and build
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, podman]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -105,7 +108,7 @@ jobs:
           restore-keys: ${{ runner.os }}-nuget-
 
       - name: Install template
-        run: dotnet new install .
+        run: dotnet new install . --force
 
       # Backend-only path must still compile — guards the //#if (frontend) and
       # (!aspire) conditional gating in AppHost.cs and the solution.

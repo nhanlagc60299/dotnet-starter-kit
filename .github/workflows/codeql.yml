@@ -6,6 +6,7 @@ on:
       - 'src/**'
   schedule:
     - cron: '0 6 * * 1'
+  workflow_dispatch:
 
 permissions:
   security-events: write
@@ -13,7 +14,9 @@ permissions:
 
 jobs:
   analyze:
-    runs-on: ubuntu-latest
+    # Self-hosted runner + public repo: never for fork PRs (see backend.yml).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, podman]
     steps:
       - uses: actions/checkout@v6
       - uses: github/codeql-action/init@v3

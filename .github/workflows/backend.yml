@@ -25,17 +25,21 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
 
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   DOTNET_NOLOGO: true
 
+# Jobs run on a self-hosted runner (deploy/ci-runner). The repo is public, so a pull request
+# from a fork must never reach that machine: `changes` is skipped for fork PRs, which skips
+# every job that needs it, and the gate below fails such PRs on a GitHub-hosted VM without
+# checking anything out. See deploy/ci-runner/README.md (Security).
 jobs:
   changes:
     name: Detect changes
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, podman]
     outputs:
       # On any non-PR event (push to main, tags, manual release) run the
       # full pipeline. On PRs, run only when backend-relevant paths changed.
@@ -56,7 +60,7 @@ jobs:
     name: Unit Tests
     needs: changes
     if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, podman]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -124,8 +128,8 @@ jobs:
     name: Integration Tests
     needs: changes
     if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
-    # Testcontainers requires Docker — ubuntu-latest has it pre-installed.
+    runs-on: [self-hosted, linux, podman]
+    # Testcontainers requires Docker — the runner talks to podman through its mounted socket.
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -176,7 +180,7 @@ jobs:
     name: DbMigrator Container Smoke
     needs: changes
     if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, podman]
     # Catches container-publish regressions (Dockerfile-less SDK container) and DI-graph
     # breakage in the migrator. Publishes the image locally, runs `apply --catalog-only`
     # against an ephemeral Postgres, asserts exit 0.
@@ -210,10 +214,11 @@ jobs:
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/Directory.Packages.props') }}
           restore-keys: ${{ runner.os }}-nuget-
 
+      # Native RID: the image runs right here, and the runner may be ARM64.
       - name: Publish DbMigrator container (local daemon)
         run: |
           dotnet publish src/Host/FSH.Starter.DbMigrator/FSH.Starter.DbMigrator.csproj \
-            -c Release -r linux-x64 \
+            -c Release -r linux-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} \
             /t:PublishContainer \
             -p:ContainerRepository=fsh-db-migrator \
             -p:ContainerImageTags=smoke
@@ -228,11 +233,16 @@ jobs:
             | tee migrator.log
           grep -q "finished successfully" migrator.log
 
+      # The runner is persistent; don't let smoke images pile up on its disk.
+      - name: Remove smoke image
+        if: always()
+        run: docker rmi -f fsh-db-migrator:smoke || true
+
   coverage:
     name: Coverage Gate
     needs: [changes, test, integration-test]
     if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, podman]
     # Merges the coverage already collected by the test + integration-test jobs
     # (no test re-runs) and fails if line coverage regresses below the floor.
     # Ratchet: bump MIN_LINE upward as coverage improves.
@@ -259,9 +269,10 @@ jobs:
           name: coverage-integration
           path: ./coverage-in/integration
 
+      # `update` installs when missing and doesn't fail when a persistent runner already has it.
       - name: Install ReportGenerator
         run: |
-          dotnet tool install --global dotnet-reportgenerator-globaltool
+          dotnet tool update --global dotnet-reportgenerator-globaltool
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
 
       - name: Merge coverage and generate report
@@ -283,9 +294,12 @@ jobs:
 
   publish-dev-containers:
     name: Publish Dev Containers
+    permissions:
+      contents: read
+      packages: write # GHCR push
     needs: [changes, test, integration-test]
     if: needs.changes.outputs.backend == 'true' && github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, podman]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -329,11 +343,14 @@ jobs:
 
   publish-release:
     name: Publish Release (NuGet + Containers)
+    permissions:
+      contents: read
+      packages: write # GHCR push
     needs: [changes, test, integration-test]
     if: |
       (github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch') ||
       startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, podman]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -418,8 +435,14 @@ jobs:
     name: Backend CI
     needs: [changes, test, integration-test, migrator-smoke, coverage]
     if: always()
-    runs-on: ubuntu-latest
+    # Fork PRs get a GitHub-hosted VM that only fails (fail closed); everything else self-hosted.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted","linux","podman"]') }}
     steps:
+      - name: Refuse fork pull request
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo "::error::CI never runs fork PRs (self-hosted runner). A maintainer must review the change and push it to a branch of this repo."
+          exit 1
       - name: Fail if a required backend job failed
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: |
