@@ -62,6 +62,31 @@ public sealed class ValidatorTests
             .Validate(new IndexSearchDocumentCommand("t", "1", "x", Url: url))
             .IsValid.ShouldBeFalse();
 
+    // Browsers strip tab/CR/LF while parsing a URL, so these become "//evil.com" (an open redirect).
+    [Theory]
+    [InlineData("/\t/evil.com")]
+    [InlineData("/\n/evil.com")]
+    [InlineData("/\r/evil.com")]
+    [InlineData("/ /evil.com")]
+    [InlineData("/\u000B/evil.com")]
+    [InlineData("/\u00A0/evil.com")]
+    [InlineData("/products/42\n")]
+    [InlineData("https://example.com/\t")]
+    public void IndexValidator_Should_Reject_ControlOrWhitespace_When_BrowserWouldStripIt(string url) =>
+        new IndexSearchDocumentCommandValidator()
+            .Validate(new IndexSearchDocumentCommand("t", "1", "x", Url: url))
+            .IsValid.ShouldBeFalse();
+
+    // Browsers do not percent-decode into the authority, so "/%09/evil.com" stays a same-origin path.
+    [Theory]
+    [InlineData("/%09/evil.com")]
+    [InlineData("/%2F/evil.com")]
+    [InlineData("/search?q=a%20b")]
+    public void IndexValidator_Should_Accept_PercentEncodedRelativeUrl_Because_BrowsersKeepItAPath(string url) =>
+        new IndexSearchDocumentCommandValidator()
+            .Validate(new IndexSearchDocumentCommand("t", "1", "x", Url: url))
+            .IsValid.ShouldBeTrue();
+
     [Fact]
     public void RemoveValidator_Should_Fail_When_KeyMissing()
     {

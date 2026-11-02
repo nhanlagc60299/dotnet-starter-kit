@@ -22,9 +22,27 @@ public sealed class IndexSearchDocumentCommandValidator : AbstractValidator<Inde
             .WithMessage("Url must be a relative path starting with a single '/', or an absolute http/https URL.");
     }
 
-    // The UI renders Url as a link, so anything else (javascript:, data:, protocol-relative //host) is refused.
-    internal static bool BeSafeLink(string? url) =>
-        url is null
-        || (url.StartsWith('/') && !url.StartsWith("//", StringComparison.Ordinal) && !url.StartsWith("/\\", StringComparison.Ordinal))
-        || (Uri.TryCreate(url, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps));
+    private static readonly Uri ProbeBase = new("https://h.invalid");
+
+    // The UI renders Url as a link that every Search.View user may click, so anything that could leave the
+    // app or run script is refused: javascript:/data: and other schemes, protocol-relative "//host" and
+    // "/\host", and control characters or whitespace (browsers strip tab/CR/LF while parsing, which turns
+    // "/\t/evil.com" into "//evil.com"). Percent-encoded bytes stay allowed: browsers do not decode them
+    // into the authority, and the probe below would catch it if they did.
+    internal static bool BeSafeLink(string? url)
+    {
+        if (url is null) return true;
+        if (url.Any(c => char.IsControl(c) || char.IsWhiteSpace(c))) return false;
+
+        if (url.StartsWith('/'))
+        {
+            if (url.Length > 1 && url[1] is '/' or '\\') return false;
+            // Belt and braces: resolved against any origin, a relative link must stay on that origin.
+            return Uri.TryCreate(ProbeBase, url, out var resolved)
+                && string.Equals(resolved.Host, ProbeBase.Host, StringComparison.Ordinal);
+        }
+
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+    }
 }
