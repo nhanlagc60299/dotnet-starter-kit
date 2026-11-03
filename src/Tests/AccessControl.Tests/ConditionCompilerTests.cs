@@ -51,7 +51,7 @@ public sealed class ConditionCompilerTests
     private static string? Problem(string json)
     {
         var x = Expression.Parameter(typeof(Doc), "x");
-        var body = ConditionCompiler.TryBuild(json, x, Vars, out string? problem);
+        var body = ConditionCompiler.TryBuild(json, x, Vars, null, out string? problem);
         if (body is not null) return null;
         problem.ShouldNotBeNullOrWhiteSpace();
         return problem;

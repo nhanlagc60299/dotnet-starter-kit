@@ -5,6 +5,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace FSH.Modules.AccessControl.Conditions;
 
@@ -25,7 +27,8 @@ public sealed class InvalidConditionException : Exception
 /// Compiles a grant condition (Strapi-style filter JSON) into a predicate body over an entity type, using only
 /// operators EF Core translates to SQL. Paths are the entity's public scalar properties (string, Guid, bool,
 /// numbers, DateTime, DateTimeOffset, enums and their nullables), matched case-insensitively; navigations are
-/// not reachable. Values are passed as SQL parameters, not inlined.
+/// not reachable. Given the EF Core entity type, a path must also be a mapped property stored in a scalar column
+/// (not jsonb/json). Values are passed as SQL parameters, not inlined.
 /// </summary>
 internal static partial class ConditionCompiler
 {
@@ -47,7 +50,7 @@ internal static partial class ConditionCompiler
         if (ConditionLimits.Check(condition) is { } tooLarge) return tooLarge;
         try
         {
-            new Walker(null, null).Object(condition, Root, 0);
+            new Walker(null, null, null).Object(condition, Root, 0);
             return null;
         }
         catch (InvalidConditionException e)
@@ -58,9 +61,12 @@ internal static partial class ConditionCompiler
 
     /// <summary>
     /// The predicate body over <paramref name="x"/> for stored condition JSON, or null (with the reason) when the
-    /// condition cannot be used: unparsable, over the limits, an unknown property or a value of the wrong type.
+    /// condition cannot be used: unparsable, over the limits, an unknown property, a value of the wrong type, or
+    /// (with an entity type) a property EF Core does not map or stores in a non-scalar column. Without an entity
+    /// type (null) only the CLR properties are checked.
     /// </summary>
-    public static Expression? TryBuild(string json, ParameterExpression x, ConditionVariables variables, out string? problem)
+    public static Expression? TryBuild(string json, ParameterExpression x, ConditionVariables variables,
+        IReadOnlyEntityType? entityType, out string? problem)
     {
         ArgumentNullException.ThrowIfNull(x);
         ArgumentNullException.ThrowIfNull(variables);
@@ -83,7 +89,7 @@ internal static partial class ConditionCompiler
         if (problem is not null) return null;
         try
         {
-            return new Walker(x, variables).Object(condition, Root, 0);
+            return new Walker(x, variables, entityType).Object(condition, Root, 0);
         }
         catch (InvalidConditionException e)
         {
@@ -99,11 +105,11 @@ internal static partial class ConditionCompiler
     }
 
     /// <summary>Like <see cref="TryBuild"/> but throws <see cref="InvalidConditionException"/>.</summary>
-    public static Expression<Func<T, bool>> Build<T>(JsonObject condition, ConditionVariables variables)
+    public static Expression<Func<T, bool>> Build<T>(JsonObject condition, ConditionVariables variables, IReadOnlyEntityType? entityType = null)
     {
         ArgumentNullException.ThrowIfNull(condition);
         var x = Expression.Parameter(typeof(T), "x");
-        var body = TryBuild(condition.ToJsonString(), x, variables, out string? problem)
+        var body = TryBuild(condition.ToJsonString(), x, variables, entityType, out string? problem)
                    ?? throw new InvalidConditionException(problem!);
         return Expression.Lambda<Func<T, bool>>(body, x);
     }
@@ -137,7 +143,7 @@ internal static partial class ConditionCompiler
     /// Walks the condition. With no parameter (save time) it only checks the structure and returns <c>true</c>
     /// leaves; with one it builds the predicate. User-supplied keys only appear in error paths once validated.
     /// </summary>
-    private sealed class Walker(ParameterExpression? x, ConditionVariables? variables)
+    private sealed class Walker(ParameterExpression? x, ConditionVariables? variables, IReadOnlyEntityType? entityType)
     {
         public Expression Object(JsonObject obj, string path, int depth)
         {
@@ -191,7 +197,25 @@ internal static partial class ConditionCompiler
                             && string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
                 .ToList();
             if (matches.Count != 1) throw Invalid(path, "Unknown property.");
+            if (entityType is not null && StoreProblem(entityType, matches[0]) is { } problem) throw Invalid(path, problem);
             return Expression.Property(x, matches[0]);
+        }
+
+        /// <summary>
+        /// Why EF Core cannot compare this property in SQL, or null: it must be mapped, to a column that is not
+        /// json/jsonb, holding a scalar (after any value converter). Otherwise the query fails at translation or in
+        /// PostgreSQL, so the condition fails closed here instead.
+        /// </summary>
+        private static string? StoreProblem(IReadOnlyEntityType entity, PropertyInfo clrProperty)
+        {
+            if (entity.FindProperty(clrProperty) is not { } property) return "The property is not mapped to a column.";
+            // The type mapping, not GetColumnType(): the read-optimized model a DbContext runs on keeps only the former.
+            var mapping = property.FindRelationalTypeMapping();
+            return mapping is null
+                   || mapping.StoreType.StartsWith("json", StringComparison.OrdinalIgnoreCase)
+                   || !IsScalar(mapping.Converter?.ProviderClrType ?? mapping.ClrType)
+                ? "The property is not stored in a scalar column."
+                : null;
         }
 
         private Expression Op(MemberExpression? member, string op, JsonNode? operand, string path)

@@ -10,7 +10,7 @@ internal static class AccessRules
 {
     /// <summary>
     /// The caller's role names. FSH puts one <see cref="ClaimTypes.Role"/> claim per role name (direct and
-    /// group roles) in the JWT, so grants are keyed by role name.
+    /// group roles) in the JWT; <see cref="GrantStore.RoleIdsAsync"/> turns them into the Ids grants are keyed by.
     /// </summary>
     public static List<string> Roles(ICurrentUser user) =>
         user.GetUserClaims()?.Where(c => c.Type == ClaimTypes.Role).Select(c => c.Value).Distinct(StringComparer.Ordinal).ToList() ?? [];
