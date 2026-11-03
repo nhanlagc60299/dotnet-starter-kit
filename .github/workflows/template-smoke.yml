@@ -21,6 +21,7 @@ on:
       - 'templates/**'
       - 'clients/**'
       - 'src/**'
+      - '.github/workflows/template-smoke.yml'
   workflow_dispatch:
 
 concurrency:
@@ -36,6 +37,10 @@ env:
   DOTNET_NOLOGO: true
 
 # Self-hosted runner + public repo: never for fork PRs (see backend.yml).
+# Every `dotnet new` call uses a per-job hive under $RUNNER_TEMP (wiped per job).
+# The runner is persistent, so the shared ~/.templateengine kept the previous
+# runs' installs: re-installing the same nupkg path registered it twice and
+# `dotnet new fsh` died with "Sequence contains more than one matching element".
 jobs:
   scaffold-full:
     name: Scaffold (Aspire + React) and build
@@ -68,10 +73,10 @@ jobs:
         run: dotnet pack templates/FullStackHero.NET.StarterKit.csproj -c Release -o "$RUNNER_TEMP/pkg"
 
       - name: Install template
-        run: dotnet new install "$RUNNER_TEMP"/pkg/FullStackHero.NET.StarterKit.*.nupkg --force
+        run: dotnet new install "$RUNNER_TEMP"/pkg/FullStackHero.NET.StarterKit.*.nupkg --force --debug:custom-hive "$RUNNER_TEMP/template-hive"
 
       - name: Scaffold project
-        run: dotnet new fsh -n Smoke.App -o "$RUNNER_TEMP/smoke" --aspire true --frontend true --skipRestore true
+        run: dotnet new fsh -n Smoke.App -o "$RUNNER_TEMP/smoke" --aspire true --frontend true --skipRestore true --debug:custom-hive "$RUNNER_TEMP/template-hive"
 
       - name: Build backend (warnings as errors)
         run: dotnet build "$RUNNER_TEMP/smoke/src/Smoke.App.slnx" -c Release -warnaserror
@@ -108,12 +113,12 @@ jobs:
           restore-keys: ${{ runner.os }}-nuget-
 
       - name: Install template
-        run: dotnet new install . --force
+        run: dotnet new install . --force --debug:custom-hive "$RUNNER_TEMP/template-hive"
 
       # Backend-only path must still compile — guards the //#if (frontend) and
       # (!aspire) conditional gating in AppHost.cs and the solution.
       - name: Scaffold backend-only project
-        run: dotnet new fsh -n Smoke.Api -o "$RUNNER_TEMP/min" --aspire false --frontend false --skipRestore true
+        run: dotnet new fsh -n Smoke.Api -o "$RUNNER_TEMP/min" --aspire false --frontend false --skipRestore true --debug:custom-hive "$RUNNER_TEMP/template-hive"
 
       - name: Build backend (warnings as errors)
         run: dotnet build "$RUNNER_TEMP/min/src/Smoke.Api.slnx" -c Release -warnaserror
