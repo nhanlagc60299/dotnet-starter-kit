@@ -13,14 +13,14 @@ public sealed class AccessGrantConfiguration : IEntityTypeConfiguration<AccessGr
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Id).ValueGeneratedNever();
 
-        // 256 = the Identity role name length.
-        builder.Property(x => x.Role).IsRequired().HasMaxLength(256);
+        // Identity role Ids are Guid strings; 450 is ASP.NET Identity's key length.
+        builder.Property(x => x.RoleId).IsRequired().HasMaxLength(450);
         builder.Property(x => x.Subject).IsRequired().HasMaxLength(100);
         builder.Property(x => x.Action).IsRequired().HasMaxLength(50);
         builder.Property(x => x.Condition).HasColumnType("jsonb");
 
-        // Widened to (Role, Subject, Action, TenantId) by BaseDbContext's tenant isolation.
-        builder.HasIndex(x => new { x.Role, x.Subject, x.Action }).IsUnique();
+        // Widened to (RoleId, Subject, Action, TenantId) by BaseDbContext's tenant isolation.
+        builder.HasIndex(x => new { x.RoleId, x.Subject, x.Action }).IsUnique();
 
         builder.Ignore(x => x.DomainEvents);
     }

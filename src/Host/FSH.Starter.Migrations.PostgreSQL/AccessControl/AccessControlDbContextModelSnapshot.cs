@@ -36,10 +36,10 @@ namespace FSH.Starter.Migrations.PostgreSQL.AccessControl
                     b.Property<string>("Condition")
                         .HasColumnType("jsonb");
 
-                    b.Property<string>("Role")
+                    b.Property<string>("RoleId")
                         .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
 
                     b.Property<string>("Subject")
                         .IsRequired()
@@ -52,9 +52,9 @@ namespace FSH.Starter.Migrations.PostgreSQL.AccessControl
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Role", "Subject", "Action", "TenantId")
+                    b.HasIndex("RoleId", "Subject", "Action", "TenantId")
                         .IsUnique()
-                        .HasDatabaseName("IX_access_grants_Role_Subject_Action");
+                        .HasDatabaseName("IX_access_grants_RoleId_Subject_Action");
 
                     b.ToTable("access_grants", "access");
 

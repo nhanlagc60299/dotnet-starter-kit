@@ -15,10 +15,10 @@ public sealed class GetRoleGrantsQueryHandler(AccessControlDbContext dbContext, 
     public async ValueTask<IReadOnlyList<AccessGrantDto>> Handle(GetRoleGrantsQuery query, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
-        string role = await RoleNames.ResolveAsync(roleService, query.Role, cancellationToken).ConfigureAwait(false);
+        string roleId = await RoleNames.ResolveIdAsync(roleService, query.Role, cancellationToken).ConfigureAwait(false);
 
         var rows = await dbContext.AccessGrants.AsNoTracking()
-            .Where(g => g.Role == role)
+            .Where(g => g.RoleId == roleId)
             .OrderBy(g => g.Subject).ThenBy(g => g.Action)
             .Select(g => new { g.Subject, g.Action, g.Condition })
             .ToListAsync(cancellationToken)

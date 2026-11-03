@@ -19,10 +19,10 @@ public sealed class UpdateRoleGrantsCommandHandler(
     public async ValueTask<Unit> Handle(UpdateRoleGrantsCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        string role = await RoleNames.ResolveAsync(roleService, command.Role, cancellationToken).ConfigureAwait(false);
+        string roleId = await RoleNames.ResolveIdAsync(roleService, command.Role, cancellationToken).ConfigureAwait(false);
 
         var existing = await dbContext.AccessGrants
-            .Where(g => g.Role == role)
+            .Where(g => g.RoleId == roleId)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
@@ -35,8 +35,8 @@ public sealed class UpdateRoleGrantsCommandHandler(
         if (!AccessRules.IsAdmin(callerRoles))
         {
             var mine = new List<CachedGrant>();
-            foreach (string callerRole in callerRoles)
-                mine.AddRange(await store.GetAsync(callerRole, cancellationToken).ConfigureAwait(false));
+            foreach (string callerRoleId in await store.RoleIdsAsync(callerRoles, cancellationToken).ConfigureAwait(false))
+                mine.AddRange(await store.GetAsync(callerRoleId, cancellationToken).ConfigureAwait(false));
 
             var before = existing.Select(g => new CachedGrant(g.Subject, g.Action, g.Condition)).ToList();
             if (AccessRules.FirstUncovered(mine, AccessRules.Changed(before, wanted)) is { } uncovered)
@@ -52,7 +52,7 @@ public sealed class UpdateRoleGrantsCommandHandler(
         {
             var current = existing.Find(e => e.Subject == grant.Subject && e.Action == grant.Action);
             if (current is null)
-                dbContext.AccessGrants.Add(AccessGrant.Create(role, grant.Subject, grant.Action, grant.Condition));
+                dbContext.AccessGrants.Add(AccessGrant.Create(roleId, grant.Subject, grant.Action, grant.Condition));
             else
                 current.SetCondition(grant.Condition);
         }
@@ -60,7 +60,7 @@ public sealed class UpdateRoleGrantsCommandHandler(
         // ponytail: two concurrent PUTs for the same role can race to the unique index, and one gets a 500
         // (retrying is safe). Take a per-role advisory lock if roles are ever edited concurrently.
         await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        await store.InvalidateAsync(role, cancellationToken).ConfigureAwait(false);
+        await store.InvalidateAsync(roleId, cancellationToken).ConfigureAwait(false);
         return Unit.Value;
     }
 }
