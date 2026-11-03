@@ -97,7 +97,7 @@ export function ChannelRail({
     <aside
       className={cn(
         "h-full shrink-0 flex-col border-r border-[var(--color-border)]",
-        "bg-[oklch(from_var(--color-card)_l_c_h_/_0.85)] backdrop-blur-xl backdrop-saturate-150",
+        "bg-[oklch(from_var(--color-card)_l_c_h_/_0.85)] backdrop-blur-xl opaque:bg-[var(--color-card)] opaque:backdrop-blur-none backdrop-saturate-150",
         // Mobile: full-width when no channel is active; collapsed when one is.
         // Desktop: always a fixed 260px column alongside the message area.
         "md:flex md:w-[260px]",

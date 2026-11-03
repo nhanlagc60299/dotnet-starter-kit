@@ -159,4 +159,16 @@ test.describe("login — demo account picker", () => {
     expect(req.headers().tenant).toBe("acme");
     expect(JSON.parse(req.postData() ?? "{}")).toMatchObject({ email: "admin@acme.com" });
   });
+
+  test("frosted sign-in card turns solid under Increase contrast", async ({ page }) => {
+    await setConfig(page, false);
+    await page.goto("/login");
+    const card = page.locator('[class*="backdrop-blur-xl"]').first();
+    await expect(card).toHaveCSS("backdrop-filter", /blur/);
+
+    // `opaque:` variant (globals.css) — same rules fire for reduced transparency.
+    await page.emulateMedia({ contrast: "more" });
+    await expect(card).toHaveCSS("backdrop-filter", "none");
+    await expect(card).not.toHaveCSS("background-color", /\//);
+  });
 });

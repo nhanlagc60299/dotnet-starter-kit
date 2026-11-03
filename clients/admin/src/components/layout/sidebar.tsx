@@ -69,7 +69,7 @@ export function Sidebar() {
       aria-label="Primary navigation"
       className={cn(
         "hidden shrink-0 flex-col border-r border-[var(--color-border)]",
-        "bg-[oklch(from_var(--color-card)_l_c_h_/_0.85)] backdrop-blur-xl backdrop-saturate-150 md:flex",
+        "bg-[oklch(from_var(--color-card)_l_c_h_/_0.85)] backdrop-blur-xl opaque:bg-[var(--color-card)] opaque:backdrop-blur-none backdrop-saturate-150 md:flex",
         "transition-[width] duration-[var(--duration-default)] ease-[var(--ease-out-cubic)]",
         collapsed ? "w-[52px]" : "w-[220px]",
       )}
