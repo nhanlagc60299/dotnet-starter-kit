@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Http;
-using System.Text;
 using System.Text.Json;
 
 namespace FSH.Modules.Auditing;
@@ -43,21 +42,24 @@ internal static class HttpBodyReader
         return total;
     }
 
+    /// <summary>Stored in place of a body that could not be parsed, so it never reaches the audit log unmasked.</summary>
+    internal const string UnparsableBodyMarker = "[omitted: body could not be parsed for masking]";
+
+    // Reject repeated keys at parse time: ToPlain's dictionary would otherwise throw (500 on every request).
+    private static readonly JsonDocumentOptions ParseOptions = new() { AllowDuplicateProperties = false };
+
     private static (object? preview, int size) DeserializePreview(MemoryStream ms, int totalBytes)
     {
         try
         {
-            ms.Position = 0;
-            using var doc = JsonDocument.Parse(ms.ToArray());
+            using var doc = JsonDocument.Parse(ms.ToArray(), ParseOptions);
             return (ToPlain(doc.RootElement), totalBytes);
         }
         catch (JsonException)
         {
-            // Not valid JSON; return UTF8 snippet as fallback
-            ms.Position = 0;
-            var text = Encoding.UTF8.GetString(ms.ToArray());
-            var snippet = text.Length > 2000 ? text[..2000] + ".(truncated)" : text;
-            return (new { text = snippet }, totalBytes);
+            // Malformed, truncated (over the byte cap) or duplicate-key JSON. Masking works on the
+            // parsed tree, so the raw text can't be masked — drop it rather than leak e.g. a password.
+            return (UnparsableBodyMarker, totalBytes);
         }
     }
 
